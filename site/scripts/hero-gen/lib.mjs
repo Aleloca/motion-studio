@@ -16,8 +16,9 @@ export const EASE = {
   lin: 'linear',
 };
 
-const FAM = { display: 'Bricolage Grotesque', body: 'Instrument Sans', mono: 'JetBrains Mono' };
-const FILE = { display: 'BricolageGrotesque', body: 'InstrumentSans', mono: 'JetBrainsMono' };
+// The site's own faces, and three display faces the gallery's creatives use (site/src/assets/fonts, SIL OFL).
+export const FAM = { display: 'Bricolage Grotesque', body: 'Instrument Sans', mono: 'JetBrains Mono', serif: 'Fraunces', condensed: 'Anton', hand: 'Caveat' };
+export const FILE = { display: 'BricolageGrotesque', body: 'InstrumentSans', mono: 'JetBrainsMono', serif: 'Fraunces', condensed: 'Anton', hand: 'Caveat' };
 
 const r = (v) => Math.round(v * 1000) / 1000;
 
@@ -46,7 +47,7 @@ export function makeComp({ width, height, duration, background, scenes, fonts })
       return base(t, name, 'text', start, dur, {
         text: p.text, fontFamily: FAM[fam], fontWeight: p.weight ?? 800, color: p.color, fontSize: p.size,
         ...(p.align ? { align: p.align } : {}),
-        x: p.x, y: p.y, width: p.w, height: p.h ?? r(lines * p.size * 1.32),
+        x: p.x, y: p.y, width: p.w, height: p.h ?? r(lines * p.size * (fam === 'condensed' ? 1.5 : 1.32)),
         ...(p.rotation ? { rotation: p.rotation } : {}), ...(p.opacity !== undefined ? { opacity: p.opacity } : {}), ...(p.scale !== undefined ? { scale: p.scale } : {}),
       }, anims);
     },
@@ -148,8 +149,10 @@ import { readFileSync } from 'node:fs';
 export const WIDTHS_FILE = new URL('widths.json', import.meta.url).pathname;
 export const WIDTHS = JSON.parse(readFileSync(WIDTHS_FILE, 'utf8'));
 export const MISSING = new Set();
+// Fraunces has an optical-size axis: the browser draws it wider at small sizes, so its widths are measured at their size.
+const OPTICAL = new Set(['serif']);
 export function tw(text, size, font = 'display', weight = 800) {
-  const key = `${FAM[font]}|${weight}|${text}`;
+  const key = `${FAM[font]}|${weight}${OPTICAL.has(font) ? `@${Math.round(size)}` : ''}|${text}`;
   if (key in WIDTHS) return (WIDTHS[key] * size) / 1000;
   MISSING.add(key);
   return text.length * size * 0.58;

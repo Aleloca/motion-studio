@@ -16,6 +16,9 @@ const EXPECTED = {
   'story-signal-v3': 'youtube-16x9', 'story-brand-16x9': 'youtube-16x9', 'story-brand-9x16': 'instagram-reel-9x16',
   'story-brand-1x1': 'instagram-post-1x1', 'story-it': 'youtube-16x9', 'story-de': 'youtube-16x9', 'story-es': 'youtube-16x9',
   'story-subs': 'youtube-16x9', 'story-backdrop-16x9': 'youtube-16x9',
+  'gallery-osteria-4x5': 'instagram-post-4x5', 'gallery-altavia-9x16': 'instagram-reel-9x16', 'gallery-volt-1x1': 'instagram-post-1x1',
+  'gallery-noir-4x5': 'instagram-post-4x5', 'gallery-ombra-16x9': 'youtube-16x9', 'gallery-signal-1x1': 'instagram-post-1x1',
+  'gallery-form-16x9': 'youtube-16x9', 'gallery-greenroots-9x16': 'instagram-reel-9x16', 'gallery-nightsky-1x1': 'instagram-post-1x1',
 };
 const items = await loadCompositions(join(SITE, 'compositions'));
 
@@ -52,6 +55,21 @@ test('the hero creatives are rich: several scenes, 8 to 15 s, svg art made by ha
     assert.ok(clips.some((k) => k.type === 'svg'), `${item.id}: svg`);
     assert.ok(!clips.some((k) => k.type === 'image'), `${item.id}: no raster`);
     for (const f of readdirSync(join(item.dir, 'assets'))) assert.match(f, /\.svg$/, `${item.id}/assets/${f}`);
+  }
+});
+
+test('the gallery\'s creatives: 6 to 12 s, three scenes or more, hand-made svg art and type only, no raster', () => {
+  const gallery = items.filter((i) => i.id.startsWith('gallery-'));
+  assert.equal(gallery.length, 9);
+  for (const item of gallery) {
+    const c = item.composition;
+    assert.ok(c.duration >= 6 && c.duration <= 12, `${item.id}: ${c.duration} s`);
+    assert.ok(c.scenes.length >= 3, `${item.id}: scenes`);
+    const clips = c.tracks.flatMap((t) => t.clips);
+    assert.ok(!clips.some((k) => ['image', 'video', 'html', 'audio'].includes(k.type)), `${item.id}: only text, shapes and svg`);
+    // A creative of type and shapes only has no assets folder in git (an empty folder is not kept).
+    const assets = join(item.dir, 'assets');
+    for (const f of existsSync(assets) ? readdirSync(assets) : []) assert.match(f, /\.svg$/, `${item.id}/assets/${f}`);
   }
 });
 

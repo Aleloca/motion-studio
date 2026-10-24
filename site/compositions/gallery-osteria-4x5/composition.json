@@ -1,0 +1,2347 @@
+{
+  "$schema": "motion-studio/composition@1",
+  "width": 1080,
+  "height": 1350,
+  "fps": 30,
+  "duration": 10,
+  "background": "#F3E9D8",
+  "fonts": [
+    {
+      "family": "Caveat",
+      "src": "assets/fonts/Caveat.woff2",
+      "weight": 700
+    },
+    {
+      "family": "Fraunces",
+      "src": "assets/fonts/Fraunces.woff2",
+      "weight": 400
+    },
+    {
+      "family": "Fraunces",
+      "src": "assets/fonts/Fraunces.woff2",
+      "weight": 600
+    },
+    {
+      "family": "Fraunces",
+      "src": "assets/fonts/Fraunces.woff2",
+      "weight": 900
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 500
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 600
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 700
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 600
+    }
+  ],
+  "scenes": [
+    {
+      "id": "table",
+      "name": "The table",
+      "start": 0,
+      "duration": 3.4
+    },
+    {
+      "id": "menu",
+      "name": "The menu",
+      "start": 3.4,
+      "duration": 4.2
+    },
+    {
+      "id": "book",
+      "name": "Book a table",
+      "start": 7.6,
+      "duration": 2.4
+    }
+  ],
+  "tracks": [
+    {
+      "id": "paper",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "frame-1",
+          "type": "shape",
+          "start": 0.05,
+          "duration": 7.85,
+          "props": {
+            "x": 48,
+            "y": 46.5,
+            "width": 984,
+            "height": 3,
+            "fill": "#2B1D14",
+            "radius": 1.5
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            }
+          ]
+        },
+        {
+          "id": "frame-2",
+          "type": "shape",
+          "start": 0.17,
+          "duration": 7.73,
+          "props": {
+            "x": 405,
+            "y": 673.5,
+            "width": 1254,
+            "height": 3,
+            "fill": "#2B1D14",
+            "radius": 1.5,
+            "rotation": 90
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            }
+          ]
+        },
+        {
+          "id": "frame-3",
+          "type": "shape",
+          "start": 0.29,
+          "duration": 7.61,
+          "props": {
+            "x": 48,
+            "y": 1300.5,
+            "width": 984,
+            "height": 3,
+            "fill": "#2B1D14",
+            "radius": 1.5,
+            "rotation": 180
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            }
+          ]
+        },
+        {
+          "id": "frame-4",
+          "type": "shape",
+          "start": 0.41,
+          "duration": 7.49,
+          "props": {
+            "x": -579,
+            "y": 673.5,
+            "width": 1254,
+            "height": 3,
+            "fill": "#2B1D14",
+            "radius": 1.5,
+            "rotation": -90
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            }
+          ]
+        },
+        {
+          "id": "leader-31",
+          "type": "svg",
+          "src": "assets/dots.svg",
+          "scene": "menu",
+          "start": 4.15,
+          "duration": 3.45,
+          "props": {
+            "fit": "cover",
+            "x": 568.338,
+            "y": 460,
+            "width": 314.744,
+            "height": 8
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "leader-36",
+          "type": "svg",
+          "src": "assets/dots.svg",
+          "scene": "menu",
+          "start": 4.47,
+          "duration": 3.13,
+          "props": {
+            "fit": "cover",
+            "x": 531.942,
+            "y": 618,
+            "width": 349.574,
+            "height": 8
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "leader-41",
+          "type": "svg",
+          "src": "assets/dots.svg",
+          "scene": "menu",
+          "start": 4.79,
+          "duration": 2.81,
+          "props": {
+            "fit": "cover",
+            "x": 726.072,
+            "y": 776,
+            "width": 163.976,
+            "height": 8
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "leader-46",
+          "type": "svg",
+          "src": "assets/dots.svg",
+          "scene": "menu",
+          "start": 5.11,
+          "duration": 2.49,
+          "props": {
+            "fit": "cover",
+            "x": 565.368,
+            "y": 934,
+            "width": 307.616,
+            "height": 8
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ingredients",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "plate-11",
+          "type": "svg",
+          "src": "assets/plate.svg",
+          "start": 1.05,
+          "duration": 6.6,
+          "props": {
+            "fit": "contain",
+            "x": 300,
+            "y": 760,
+            "width": 480,
+            "height": 480
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.6
+            },
+            {
+              "prop": "rotation",
+              "from": 0,
+              "to": 70,
+              "start": 0,
+              "duration": 6.6,
+              "ease": "linear"
+            },
+            {
+              "prop": "x",
+              "from": 0,
+              "to": 330,
+              "start": 2.2,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 380,
+              "start": 2.2,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 1.25,
+              "start": 2.2,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "pasta-12",
+          "type": "svg",
+          "src": "assets/pasta.svg",
+          "start": 1.3,
+          "duration": 6.35,
+          "props": {
+            "fit": "contain",
+            "x": 390,
+            "y": 850,
+            "width": 300,
+            "height": 300
+          },
+          "animations": [
+            {
+              "preset": "scaleIn",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": 0,
+              "to": -40,
+              "start": 0,
+              "duration": 6.35,
+              "ease": "linear"
+            },
+            {
+              "prop": "x",
+              "from": 0,
+              "to": 330,
+              "start": 1.95,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 380,
+              "start": 1.95,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 1.25,
+              "start": 1.95,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "tomato-13",
+          "type": "svg",
+          "src": "assets/tomato.svg",
+          "scene": "table",
+          "start": 1.55,
+          "duration": 1.75,
+          "props": {
+            "fit": "contain",
+            "x": 120,
+            "y": 780,
+            "width": 180,
+            "height": 180,
+            "rotation": -10
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 0.75,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": -1040
+                },
+                {
+                  "t": 0.55,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 0.72,
+                  "v": -36,
+                  "ease": "cubic-bezier(.2,.7,.4,1)"
+                },
+                {
+                  "t": 0.88,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 1,
+                  "v": 0
+                }
+              ]
+            },
+            {
+              "prop": "rotation",
+              "from": -40,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -960,
+              "start": 1.45,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "basil-14",
+          "type": "svg",
+          "src": "assets/basil.svg",
+          "scene": "table",
+          "start": 1.7,
+          "duration": 1.6,
+          "props": {
+            "fit": "contain",
+            "x": 790,
+            "y": 690,
+            "width": 170,
+            "height": 170,
+            "rotation": 7.5
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 0.75,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": -940
+                },
+                {
+                  "t": 0.55,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 0.72,
+                  "v": -36,
+                  "ease": "cubic-bezier(.2,.7,.4,1)"
+                },
+                {
+                  "t": 0.88,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 1,
+                  "v": 0
+                }
+              ]
+            },
+            {
+              "prop": "rotation",
+              "from": 30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -860,
+              "start": 1.28,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "garlic-15",
+          "type": "svg",
+          "src": "assets/garlic.svg",
+          "scene": "table",
+          "start": 1.85,
+          "duration": 1.45,
+          "props": {
+            "fit": "contain",
+            "x": 820,
+            "y": 1050,
+            "width": 170,
+            "height": 170,
+            "rotation": -5
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 0.75,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": -1300
+                },
+                {
+                  "t": 0.55,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 0.72,
+                  "v": -36,
+                  "ease": "cubic-bezier(.2,.7,.4,1)"
+                },
+                {
+                  "t": 0.88,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 1,
+                  "v": 0
+                }
+              ]
+            },
+            {
+              "prop": "rotation",
+              "from": -20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -1220,
+              "start": 1.11,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "chili-16",
+          "type": "svg",
+          "src": "assets/chili.svg",
+          "scene": "table",
+          "start": 2,
+          "duration": 1.3,
+          "props": {
+            "fit": "contain",
+            "x": 100,
+            "y": 1060,
+            "width": 200,
+            "height": 200,
+            "rotation": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 0.75,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": -1340
+                },
+                {
+                  "t": 0.55,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 0.72,
+                  "v": -36,
+                  "ease": "cubic-bezier(.2,.7,.4,1)"
+                },
+                {
+                  "t": 0.88,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 1,
+                  "v": 0
+                }
+              ]
+            },
+            {
+              "prop": "rotation",
+              "from": 60,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -1260,
+              "start": 0.94,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "lemon-17",
+          "type": "svg",
+          "src": "assets/lemon.svg",
+          "scene": "table",
+          "start": 2.12,
+          "duration": 1.18,
+          "props": {
+            "fit": "contain",
+            "x": 640,
+            "y": 600,
+            "width": 130,
+            "height": 130,
+            "rotation": -20
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 0.75,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": -810
+                },
+                {
+                  "t": 0.55,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 0.72,
+                  "v": -36,
+                  "ease": "cubic-bezier(.2,.7,.4,1)"
+                },
+                {
+                  "t": 0.88,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 1,
+                  "v": 0
+                }
+              ]
+            },
+            {
+              "prop": "rotation",
+              "from": -80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -730,
+              "start": 0.8,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "basil-18",
+          "type": "svg",
+          "src": "assets/basil.svg",
+          "scene": "table",
+          "start": 2.22,
+          "duration": 1.08,
+          "props": {
+            "fit": "contain",
+            "x": 190,
+            "y": 980,
+            "width": 110,
+            "height": 110,
+            "rotation": -30
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 0.75,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": -1170
+                },
+                {
+                  "t": 0.55,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 0.72,
+                  "v": -36,
+                  "ease": "cubic-bezier(.2,.7,.4,1)"
+                },
+                {
+                  "t": 0.88,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 1,
+                  "v": 0
+                }
+              ]
+            },
+            {
+              "prop": "rotation",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -1090,
+              "start": 0.68,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "row-tomato-28",
+          "type": "svg",
+          "src": "assets/tomato.svg",
+          "scene": "menu",
+          "start": 3.95,
+          "duration": 3.65,
+          "props": {
+            "fit": "contain",
+            "x": 112,
+            "y": 416,
+            "width": 92,
+            "height": 92
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "rotation",
+              "from": -30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "row-garlic-33",
+          "type": "svg",
+          "src": "assets/garlic.svg",
+          "scene": "menu",
+          "start": 4.27,
+          "duration": 3.33,
+          "props": {
+            "fit": "contain",
+            "x": 112,
+            "y": 574,
+            "width": 92,
+            "height": 92
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "rotation",
+              "from": -30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "row-lemon-38",
+          "type": "svg",
+          "src": "assets/lemon.svg",
+          "scene": "menu",
+          "start": 4.59,
+          "duration": 3.01,
+          "props": {
+            "fit": "contain",
+            "x": 112,
+            "y": 732,
+            "width": 92,
+            "height": 92
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "rotation",
+              "from": -30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "row-basil-43",
+          "type": "svg",
+          "src": "assets/basil.svg",
+          "scene": "menu",
+          "start": 4.91,
+          "duration": 2.69,
+          "props": {
+            "fit": "contain",
+            "x": 112,
+            "y": 890,
+            "width": 92,
+            "height": 92
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "rotation",
+              "from": -30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "type",
+      "kind": "text",
+      "clips": [
+        {
+          "id": "kicker-5",
+          "type": "text",
+          "scene": "table",
+          "start": 0.3,
+          "duration": 3,
+          "props": {
+            "text": "TRASTEVERE  ·  DAL 1987",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 600,
+            "color": "#D4452B",
+            "fontSize": 26,
+            "align": "center",
+            "x": 0,
+            "y": 128,
+            "width": 1080,
+            "height": 34.32
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "osteria-6",
+          "type": "text",
+          "scene": "table",
+          "start": 0.45,
+          "duration": 2.9,
+          "props": {
+            "text": "Osteria",
+            "fontFamily": "Fraunces",
+            "fontWeight": 400,
+            "color": "#2B1D14",
+            "fontSize": 104,
+            "x": 392.684,
+            "y": 180,
+            "width": 310.232,
+            "height": 137.28
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "prop": "y",
+              "from": 40,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -60,
+              "start": 2.55,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "fumo-7",
+          "type": "text",
+          "scene": "table",
+          "start": 0.62,
+          "duration": 2.78,
+          "props": {
+            "text": "F",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#D4452B",
+            "fontSize": 330,
+            "x": 138.315,
+            "y": 260,
+            "width": 230.67,
+            "height": 435.6
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 160,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -8,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -120,
+              "start": 2.38,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "fumo-8",
+          "type": "text",
+          "scene": "table",
+          "start": 0.71,
+          "duration": 2.69,
+          "props": {
+            "text": "u",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#D4452B",
+            "fontSize": 330,
+            "x": 323.385,
+            "y": 260,
+            "width": 225.72,
+            "height": 435.6
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 160,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": 8,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -120,
+              "start": 2.32,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "fumo-9",
+          "type": "text",
+          "scene": "table",
+          "start": 0.8,
+          "duration": 2.6,
+          "props": {
+            "text": "m",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#D4452B",
+            "fontSize": 330,
+            "x": 495.255,
+            "y": 260,
+            "width": 319.44,
+            "height": 435.6
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 160,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -8,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -120,
+              "start": 2.26,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "fumo-10",
+          "type": "text",
+          "scene": "table",
+          "start": 0.89,
+          "duration": 2.51,
+          "props": {
+            "text": "o",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#D4452B",
+            "fontSize": 330,
+            "x": 768.765,
+            "y": 260,
+            "width": 212.52,
+            "height": 435.6
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 160,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": 8,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -120,
+              "start": 2.2,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "note-19",
+          "type": "text",
+          "scene": "table",
+          "start": 2.45,
+          "duration": 0.85,
+          "props": {
+            "text": "made this morning",
+            "fontFamily": "Caveat",
+            "fontWeight": 700,
+            "color": "#2B1D14",
+            "fontSize": 58,
+            "x": 96,
+            "y": 664,
+            "width": 420,
+            "height": 76.56,
+            "rotation": -6
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "menu-k-20",
+          "type": "text",
+          "scene": "menu",
+          "start": 3.5,
+          "duration": 4,
+          "props": {
+            "text": "MENU  ·  GIOVEDÌ 14",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 600,
+            "color": "#D4452B",
+            "fontSize": 26,
+            "x": 120,
+            "y": 130,
+            "width": 600,
+            "height": 34.32
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "tonight-21",
+          "type": "text",
+          "scene": "menu",
+          "start": 3.55,
+          "duration": 4,
+          "props": {
+            "text": "T",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#2B1D14",
+            "fontSize": 150,
+            "x": 112,
+            "y": 168,
+            "width": 119.1,
+            "height": 198
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "tonight-22",
+          "type": "text",
+          "scene": "menu",
+          "start": 3.595,
+          "duration": 3.955,
+          "props": {
+            "text": "o",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#2B1D14",
+            "fontSize": 150,
+            "x": 210.1,
+            "y": 168,
+            "width": 96.6,
+            "height": 198
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "tonight-23",
+          "type": "text",
+          "scene": "menu",
+          "start": 3.64,
+          "duration": 3.91,
+          "props": {
+            "text": "n",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#2B1D14",
+            "fontSize": 150,
+            "x": 274.45,
+            "y": 168,
+            "width": 102.3,
+            "height": 198
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "tonight-24",
+          "type": "text",
+          "scene": "menu",
+          "start": 3.685,
+          "duration": 3.865,
+          "props": {
+            "text": "i",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#2B1D14",
+            "fontSize": 150,
+            "x": 355.75,
+            "y": 168,
+            "width": 59.4,
+            "height": 198
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "tonight-25",
+          "type": "text",
+          "scene": "menu",
+          "start": 3.73,
+          "duration": 3.82,
+          "props": {
+            "text": "g",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#2B1D14",
+            "fontSize": 150,
+            "x": 394.15,
+            "y": 168,
+            "width": 98.4,
+            "height": 198
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "tonight-26",
+          "type": "text",
+          "scene": "menu",
+          "start": 3.775,
+          "duration": 3.775,
+          "props": {
+            "text": "h",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#2B1D14",
+            "fontSize": 150,
+            "x": 471.55,
+            "y": 168,
+            "width": 102,
+            "height": 198
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "tonight-27",
+          "type": "text",
+          "scene": "menu",
+          "start": 3.82,
+          "duration": 3.73,
+          "props": {
+            "text": "t",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#2B1D14",
+            "fontSize": 150,
+            "x": 552.55,
+            "y": 168,
+            "width": 69.6,
+            "height": 198
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "dish-29",
+          "type": "text",
+          "scene": "menu",
+          "start": 4,
+          "duration": 3.6,
+          "props": {
+            "text": "Amatriciana",
+            "fontFamily": "Fraunces",
+            "fontWeight": 600,
+            "color": "#2B1D14",
+            "fontSize": 54,
+            "x": 236,
+            "y": 416,
+            "width": 324.338,
+            "height": 71.28
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "what-30",
+          "type": "text",
+          "scene": "menu",
+          "start": 4.13,
+          "duration": 3.47,
+          "props": {
+            "text": "Guanciale, tomato, pecorino",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#7A6555",
+            "fontSize": 27,
+            "x": 236,
+            "y": 486,
+            "width": 600,
+            "height": 35.64
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "prop": "y",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "price-32",
+          "type": "text",
+          "scene": "menu",
+          "start": 4.35,
+          "duration": 3.25,
+          "props": {
+            "text": "15",
+            "fontFamily": "Fraunces",
+            "fontWeight": 600,
+            "color": "#D4452B",
+            "fontSize": 54,
+            "x": 905.082,
+            "y": 416,
+            "width": 64.918,
+            "height": 71.28
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "dish-34",
+          "type": "text",
+          "scene": "menu",
+          "start": 4.32,
+          "duration": 3.28,
+          "props": {
+            "text": "Aglio e olio",
+            "fontFamily": "Fraunces",
+            "fontWeight": 600,
+            "color": "#2B1D14",
+            "fontSize": 54,
+            "x": 236,
+            "y": 574,
+            "width": 287.942,
+            "height": 71.28
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "what-35",
+          "type": "text",
+          "scene": "menu",
+          "start": 4.45,
+          "duration": 3.15,
+          "props": {
+            "text": "Spaghetti, garlic, chili",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#7A6555",
+            "fontSize": 27,
+            "x": 236,
+            "y": 644,
+            "width": 600,
+            "height": 35.64
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "prop": "y",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "price-37",
+          "type": "text",
+          "scene": "menu",
+          "start": 4.67,
+          "duration": 2.93,
+          "props": {
+            "text": "12",
+            "fontFamily": "Fraunces",
+            "fontWeight": 600,
+            "color": "#D4452B",
+            "fontSize": 54,
+            "x": 903.516,
+            "y": 574,
+            "width": 66.484,
+            "height": 71.28
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "dish-39",
+          "type": "text",
+          "scene": "menu",
+          "start": 4.64,
+          "duration": 2.96,
+          "props": {
+            "text": "Carciofi alla giudia",
+            "fontFamily": "Fraunces",
+            "fontWeight": 600,
+            "color": "#2B1D14",
+            "fontSize": 54,
+            "x": 236,
+            "y": 732,
+            "width": 482.072,
+            "height": 71.28
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "what-40",
+          "type": "text",
+          "scene": "menu",
+          "start": 4.77,
+          "duration": 2.83,
+          "props": {
+            "text": "Fried artichoke, lemon",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#7A6555",
+            "fontSize": 27,
+            "x": 236,
+            "y": 802,
+            "width": 600,
+            "height": 35.64
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "prop": "y",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "price-42",
+          "type": "text",
+          "scene": "menu",
+          "start": 4.99,
+          "duration": 2.61,
+          "props": {
+            "text": "11",
+            "fontFamily": "Fraunces",
+            "fontWeight": 600,
+            "color": "#D4452B",
+            "fontSize": 54,
+            "x": 912.048,
+            "y": 732,
+            "width": 57.952,
+            "height": 71.28
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "dish-44",
+          "type": "text",
+          "scene": "menu",
+          "start": 4.96,
+          "duration": 2.64,
+          "props": {
+            "text": "Saltimbocca",
+            "fontFamily": "Fraunces",
+            "fontWeight": 600,
+            "color": "#2B1D14",
+            "fontSize": 54,
+            "x": 236,
+            "y": 890,
+            "width": 321.368,
+            "height": 71.28
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "what-45",
+          "type": "text",
+          "scene": "menu",
+          "start": 5.09,
+          "duration": 2.51,
+          "props": {
+            "text": "Veal, sage, prosciutto",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#7A6555",
+            "fontSize": 27,
+            "x": 236,
+            "y": 960,
+            "width": 600,
+            "height": 35.64
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "prop": "y",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "price-47",
+          "type": "text",
+          "scene": "menu",
+          "start": 5.31,
+          "duration": 2.29,
+          "props": {
+            "text": "22",
+            "fontFamily": "Fraunces",
+            "fontWeight": 600,
+            "color": "#D4452B",
+            "fontSize": 54,
+            "x": 894.984,
+            "y": 890,
+            "width": 75.016,
+            "height": 71.28
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "note2-48",
+          "type": "text",
+          "scene": "menu",
+          "start": 5.6,
+          "duration": 1.95,
+          "props": {
+            "text": "the guanciale is from Amatrice!",
+            "fontFamily": "Caveat",
+            "fontWeight": 700,
+            "color": "#D4452B",
+            "fontSize": 60,
+            "x": 150,
+            "y": 1082,
+            "width": 820,
+            "height": 79.2,
+            "rotation": -3
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "swoosh-49",
+          "type": "svg",
+          "src": "assets/swoosh.svg",
+          "scene": "menu",
+          "start": 6,
+          "duration": 1.55,
+          "props": {
+            "fit": "fill",
+            "x": 150,
+            "y": 1164,
+            "width": 560,
+            "height": 40,
+            "rotation": -3
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "iris",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "iris-50",
+          "type": "shape",
+          "start": 7.45,
+          "duration": 2.55,
+          "props": {
+            "x": -820,
+            "y": -450,
+            "width": 3200,
+            "height": 3200,
+            "fill": "#D4452B",
+            "radius": 1600
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            }
+          ]
+        },
+        {
+          "id": "steam-51",
+          "type": "svg",
+          "src": "assets/steam.svg",
+          "scene": "book",
+          "start": 7.9,
+          "duration": 1.85,
+          "props": {
+            "fit": "contain",
+            "x": 430,
+            "y": 250,
+            "width": 220,
+            "height": 200
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "prop": "y",
+              "from": 40,
+              "to": -30,
+              "start": 0,
+              "duration": 1.85,
+              "ease": "cubic-bezier(.37,0,.63,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "bowl-52",
+          "type": "svg",
+          "src": "assets/bowl.svg",
+          "scene": "book",
+          "start": 7.8,
+          "duration": 1.95,
+          "props": {
+            "fit": "contain",
+            "x": 390,
+            "y": 420,
+            "width": 300,
+            "height": 150
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "book-53",
+          "type": "text",
+          "scene": "book",
+          "start": 7.95,
+          "duration": 2,
+          "props": {
+            "text": "Book",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#FBF5EA",
+            "fontSize": 128,
+            "x": 201.312,
+            "y": 610,
+            "width": 317.312,
+            "height": 168.96
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.25
+            },
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -4,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        },
+        {
+          "id": "book-54",
+          "type": "text",
+          "scene": "book",
+          "start": 8.05,
+          "duration": 1.9,
+          "props": {
+            "text": "a",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#FBF5EA",
+            "fontSize": 128,
+            "x": 518.752,
+            "y": 610,
+            "width": 83.328,
+            "height": 168.96
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.25
+            },
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -4,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        },
+        {
+          "id": "book-55",
+          "type": "text",
+          "scene": "book",
+          "start": 8.15,
+          "duration": 1.8,
+          "props": {
+            "text": "table",
+            "fontFamily": "Fraunces",
+            "fontWeight": 900,
+            "color": "#FBF5EA",
+            "fontSize": 128,
+            "x": 602.208,
+            "y": 610,
+            "width": 295.68,
+            "height": 168.96
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.25
+            },
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -4,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        },
+        {
+          "id": "when-56",
+          "type": "text",
+          "scene": "book",
+          "start": 8.3,
+          "duration": 1.65,
+          "props": {
+            "text": "Thursday to Sunday, from 19:00",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 600,
+            "color": "#FBF5EA",
+            "fontSize": 40,
+            "align": "center",
+            "x": 0,
+            "y": 790,
+            "width": 1080,
+            "height": 52.8
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "prop": "y",
+              "from": 20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        },
+        {
+          "id": "btn-57",
+          "type": "shape",
+          "scene": "book",
+          "start": 8.5,
+          "duration": 1.45,
+          "props": {
+            "x": 330,
+            "y": 900,
+            "width": 420,
+            "height": 104,
+            "fill": "#FBF5EA",
+            "radius": 52
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.45
+            }
+          ]
+        },
+        {
+          "id": "btn-t-58",
+          "type": "text",
+          "scene": "book",
+          "start": 8.6,
+          "duration": 1.35,
+          "props": {
+            "text": "Reserve  →",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#D4452B",
+            "fontSize": 36,
+            "align": "center",
+            "x": 330,
+            "y": 924.96,
+            "width": 420,
+            "height": 47.52
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "addr-59",
+          "type": "text",
+          "scene": "book",
+          "start": 8.75,
+          "duration": 1.2,
+          "props": {
+            "text": "Vicolo del Fumo 7, Roma",
+            "fontFamily": "Caveat",
+            "fontWeight": 700,
+            "color": "#FBF5EA",
+            "fontSize": 52,
+            "align": "center",
+            "x": 0,
+            "y": 1080,
+            "width": 1080,
+            "height": 68.64,
+            "rotation": -2
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        },
+        {
+          "id": "out-60",
+          "type": "shape",
+          "scene": "book",
+          "start": 9.62,
+          "duration": 0.38,
+          "props": {
+            "x": 0,
+            "y": 0,
+            "width": 1080,
+            "height": 1350,
+            "fill": "#F3E9D8"
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 import { writeFileSync } from 'node:fs';
 import { serve } from '../serve.mjs';
 import { launchChrome } from '../chrome.mjs';
-import { WIDTHS, WIDTHS_FILE } from './lib.mjs';
+import { FAM, FILE, WIDTHS, WIDTHS_FILE } from './lib.mjs';
 
 /** @param {string[]} keys `family|weight|text` */
 export async function measure(keys) {
@@ -17,15 +17,24 @@ export async function measure(keys) {
     await page.goto(server.url);
     const res = await page.eval(`(async () => {
       await document.fonts.ready;
+      // The gallery's display faces are not on the page: load them from the site's fonts.
+      const declared = new Set([...document.fonts].map((f) => f.family.replace(/"/g, '')));
+      for (const [fam, file] of ${JSON.stringify(Object.keys(FAM).map((k) => [FAM[k], FILE[k]]))}) {
+        if (!declared.has(fam)) document.fonts.add(new FontFace(fam, 'url(assets/fonts/' + file + '.woff2)', { weight: '100 1000' }));
+      }
       const out = {};
       const span = document.createElement('span');
       span.style.cssText = 'position:absolute;left:0;top:0;white-space:pre;font-size:1000px;line-height:1.2;letter-spacing:0;font-kerning:normal';
       document.body.appendChild(span);
       for (const key of ${JSON.stringify(todo)}) {
-        const [fam, weight, text] = key.split('|');
-        await document.fonts.load(weight + ' 1000px "' + fam + '"', text);
-        span.style.fontFamily = '"' + fam + '"'; span.style.fontWeight = weight; span.textContent = text;
-        out[key] = Math.round(span.getBoundingClientRect().width);
+        // "family|weight|text", or "family|weight@size|text" for a face measured at its own size (optical sizes).
+        const [fam, ws, ...rest] = key.split('|');
+        const text = rest.join('|');
+        const [weight, at] = ws.split('@');
+        const px = at ? Number(at) : 1000;
+        await document.fonts.load(weight + ' ' + px + 'px "' + fam + '"', text);
+        span.style.fontFamily = '"' + fam + '"'; span.style.fontWeight = weight; span.style.fontSize = px + 'px'; span.textContent = text;
+        out[key] = Math.round((span.getBoundingClientRect().width * 1000) / px);
       }
       return out;
     })()`);

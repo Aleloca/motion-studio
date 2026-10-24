@@ -1,0 +1,6189 @@
+{
+  "$schema": "motion-studio/composition@1",
+  "width": 1080,
+  "height": 1080,
+  "fps": 30,
+  "duration": 9,
+  "background": "#F2E3C6",
+  "fonts": [
+    {
+      "family": "Bricolage Grotesque",
+      "src": "assets/fonts/BricolageGrotesque.woff2",
+      "weight": 800
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 500
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 600
+    }
+  ],
+  "scenes": [
+    {
+      "id": "sleeve",
+      "name": "Out of the sleeve",
+      "start": 0,
+      "duration": 3
+    },
+    {
+      "id": "play",
+      "name": "On air",
+      "start": 3,
+      "duration": 3.4
+    },
+    {
+      "id": "weekly",
+      "name": "Every Friday",
+      "start": 6.4,
+      "duration": 2.6
+    }
+  ],
+  "tracks": [
+    {
+      "id": "stripes",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "stripes-1",
+          "type": "svg",
+          "src": "assets/stripes.svg",
+          "start": 0.05,
+          "duration": 8.95,
+          "props": {
+            "fit": "contain",
+            "x": 0,
+            "y": 0,
+            "width": 1080,
+            "height": 1080
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "start": 8.55,
+              "duration": 0.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "record",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "record-2",
+          "type": "svg",
+          "src": "assets/record.svg",
+          "start": 0.75,
+          "duration": 8.25,
+          "props": {
+            "fit": "contain",
+            "x": 262,
+            "y": 204,
+            "width": 556,
+            "height": 556
+          },
+          "animations": [
+            {
+              "prop": "x",
+              "start": 0,
+              "duration": 2.3,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": -330
+                },
+                {
+                  "t": 0.12,
+                  "v": -330
+                },
+                {
+                  "t": 0.3,
+                  "v": 0,
+                  "ease": "cubic-bezier(.16,1,.3,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0
+                }
+              ]
+            },
+            {
+              "prop": "rotation",
+              "from": 0,
+              "to": 1440,
+              "start": 0.6,
+              "duration": 7.65,
+              "ease": "linear"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 7.75,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "shine-3",
+          "type": "svg",
+          "src": "assets/shine.svg",
+          "start": 1.4,
+          "duration": 7.6,
+          "props": {
+            "fit": "contain",
+            "x": 262,
+            "y": 204,
+            "width": 556,
+            "height": 556
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 7.1,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "sleeve-4",
+          "type": "svg",
+          "src": "assets/sleeve.svg",
+          "start": 0.2,
+          "duration": 3.1,
+          "props": {
+            "fit": "contain",
+            "x": 110,
+            "y": 290,
+            "width": 470,
+            "height": 470,
+            "rotation": -4
+          },
+          "animations": [
+            {
+              "prop": "x",
+              "from": -700,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "x",
+              "from": 0,
+              "to": -900,
+              "start": 2.5,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "arm-5",
+          "type": "svg",
+          "src": "assets/arm.svg",
+          "start": 2.6,
+          "duration": 6.4,
+          "props": {
+            "fit": "contain",
+            "x": 640,
+            "y": 0,
+            "width": 400,
+            "height": 400
+          },
+          "animations": [
+            {
+              "prop": "rotation",
+              "from": -48,
+              "to": 0,
+              "start": 0,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "rotation",
+              "from": 0,
+              "to": -48,
+              "start": 5.7,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "bars",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "bar-18",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.1,
+          "duration": 2.5,
+          "props": {
+            "x": 40,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.5,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -138,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -110,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -98,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -82,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -86,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -76,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -123,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -76,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -80,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -131,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -128,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -110,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -107,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -86,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -77,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -89,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -81,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -116,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -136,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -89,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -79,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -153,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -133,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -120,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -78,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -77,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-19",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.115,
+          "duration": 2.485,
+          "props": {
+            "x": 86.19,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#D9592A",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.485,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -141,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -107,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -87,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -79,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -121,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -106,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -98,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -86,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -158,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -150,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -103,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -83,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -77,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -159,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -88,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -88,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -80,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -161,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -125,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-20",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.13,
+          "duration": 2.47,
+          "props": {
+            "x": 132.381,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.47,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -131,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -166,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -139,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -125,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -92,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -138,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -123,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -90,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -81,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -146,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -139,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -120,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -170,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -124,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -131,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -132,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -87,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -145,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -166,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -133,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -135,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -88,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-21",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.145,
+          "duration": 2.455,
+          "props": {
+            "x": 178.571,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.455,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -165,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -160,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -88,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -187,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -165,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -139,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -98,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -80,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -157,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -137,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -89,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -176,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -147,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -114,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -139,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -90,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -193,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -153,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -124,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -109,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-22",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.16,
+          "duration": 2.44,
+          "props": {
+            "x": 224.762,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#D9592A",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.44,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -157,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -131,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -106,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -148,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -160,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -108,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -90,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -90,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -219,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -184,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -159,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -168,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -131,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -120,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -82,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -183,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -163,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -125,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -116,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-23",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.175,
+          "duration": 2.425,
+          "props": {
+            "x": 270.952,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.425,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -158,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -189,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -138,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -138,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -87,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -221,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -194,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -155,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -146,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -120,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -108,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -223,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -141,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -176,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -121,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -190,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -202,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -134,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -143,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -109,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -190,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -194,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -180,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -138,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -107,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -118,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-24",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.19,
+          "duration": 2.41,
+          "props": {
+            "x": 317.143,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.41,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -193,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -144,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -169,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -128,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -226,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -192,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -164,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -147,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -103,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -185,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -189,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -133,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -136,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -109,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -87,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -166,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -187,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -182,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -151,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -116,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -120,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -114,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -92,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -160,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -178,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -139,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -151,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -136,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -109,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-25",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.205,
+          "duration": 2.395,
+          "props": {
+            "x": 363.333,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#D9592A",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.395,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -216,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -169,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -159,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -135,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -118,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -125,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -223,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -154,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -132,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -143,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -98,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -196,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -186,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -152,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -166,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -178,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -167,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -128,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -110,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -88,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -114,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -186,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -196,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -165,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -128,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-26",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.22,
+          "duration": 2.38,
+          "props": {
+            "x": 409.524,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.38,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -225,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -170,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -151,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -136,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -116,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -198,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -203,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -143,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -120,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -125,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -110,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -185,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -154,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -191,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -163,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -136,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -121,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -106,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -205,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -185,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -154,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -116,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -125,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -122,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -228,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -214,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -161,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -154,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -139,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-27",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.235,
+          "duration": 2.365,
+          "props": {
+            "x": 455.714,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.365,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -201,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -166,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -157,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -140,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -106,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -208,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -195,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -162,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -133,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -121,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -196,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -212,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -170,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -159,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -128,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -124,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -103,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -216,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -183,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -143,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -120,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -109,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -247,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -168,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -186,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -158,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -140,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -107,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-28",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.25,
+          "duration": 2.35,
+          "props": {
+            "x": 501.905,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#D9592A",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.35,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -171,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -170,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -161,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -239,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -197,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -161,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -159,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -122,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -86,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -220,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -193,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -134,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -107,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -89,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -236,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -172,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -180,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -155,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -107,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -124,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -118,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -180,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -153,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -168,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-29",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.265,
+          "duration": 2.335,
+          "props": {
+            "x": 548.095,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.335,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -217,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -172,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -152,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -128,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -106,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -106,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -201,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -164,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -148,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -116,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -215,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -194,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -125,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -116,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -92,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -231,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -154,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -131,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -122,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -118,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -109,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -164,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -178,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -159,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-30",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.28,
+          "duration": 2.32,
+          "props": {
+            "x": 594.286,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.32,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -201,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -138,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -166,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -122,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -124,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -190,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -193,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -162,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -118,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -108,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -160,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -145,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -175,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -103,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -103,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -205,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -192,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -164,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -160,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -146,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -121,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -109,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -109,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -184,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -175,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -157,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -125,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-31",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.295,
+          "duration": 2.305,
+          "props": {
+            "x": 640.476,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#D9592A",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.305,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -177,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -131,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -136,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -109,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -107,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -216,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -148,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -163,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -123,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -209,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -154,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -164,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -190,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -160,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -108,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -86,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -231,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -141,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -153,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -156,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -141,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-32",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.31,
+          "duration": 2.29,
+          "props": {
+            "x": 686.667,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.29,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -148,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -159,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -118,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -215,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -149,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -167,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -145,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -116,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -89,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -199,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -173,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -154,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -147,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -155,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -181,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -145,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -106,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -103,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -89,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -204,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -187,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -156,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -145,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-33",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.325,
+          "duration": 2.275,
+          "props": {
+            "x": 732.857,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.275,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -164,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -141,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -134,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -102,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -88,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -82,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -159,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -187,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -119,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -81,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -81,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -165,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -167,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -124,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -103,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -78,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -157,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -114,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -106,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -98,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -92,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -180,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -171,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -140,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-34",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.34,
+          "duration": 2.26,
+          "props": {
+            "x": 779.048,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#D9592A",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.26,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -166,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -155,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -131,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -155,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -140,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -153,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -132,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -128,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -80,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -156,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -123,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -80,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -83,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -175,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -133,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -120,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -86,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -150,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-35",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.355,
+          "duration": 2.245,
+          "props": {
+            "x": 825.238,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.245,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -168,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -81,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -169,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -139,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -129,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -104,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -87,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -183,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -135,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -115,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -121,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -81,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -83,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -82,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -163,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -134,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -108,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -83,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -90,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -156,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -126,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -123,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-36",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.37,
+          "duration": 2.23,
+          "props": {
+            "x": 871.429,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.23,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -134,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -108,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -87,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -98,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -88,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -78,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -175,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -108,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -88,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -76,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -83,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -166,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -143,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -132,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -103,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -86,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -77,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -80,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -87,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -142,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -153,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -127,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -114,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -103,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -96,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -82,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -135,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -135,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -100,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-37",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.385,
+          "duration": 2.215,
+          "props": {
+            "x": 917.619,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#D9592A",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.215,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -114,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -110,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -76,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -73,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -67,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -71,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -121,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -98,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -111,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -93,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -77,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -69,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -72,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -74,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -110,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -94,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -76,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -77,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -75,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -67,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -122,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -130,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -97,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -98,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -82,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -78,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -70,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -79,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -133,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -113,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-38",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.4,
+          "duration": 2.2,
+          "props": {
+            "x": 963.81,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.2,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -95,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -92,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -92,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -87,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -79,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -64,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -69,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -65,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -124,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -106,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -81,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -76,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -72,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -79,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -78,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -73,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -132,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -101,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -86,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -77,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -69,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -73,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -77,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -73,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -110,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -99,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -89,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -72,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -71,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -70,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -66,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -133,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -108,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -108,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-39",
+          "type": "shape",
+          "scene": "play",
+          "start": 3.415,
+          "duration": 2.185,
+          "props": {
+            "x": 1010,
+            "y": 800,
+            "width": 30,
+            "height": 300,
+            "fill": "#E7A92F",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.185,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.025,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.05,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.075,
+                  "v": -75,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.1,
+                  "v": -75,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.125,
+                  "v": -79,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.15,
+                  "v": -68,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.175,
+                  "v": -63,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.2,
+                  "v": -63,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.225,
+                  "v": -70,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.25,
+                  "v": -112,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.275,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.3,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.325,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.35,
+                  "v": -67,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.375,
+                  "v": -71,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.4,
+                  "v": -69,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.425,
+                  "v": -62,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.45,
+                  "v": -65,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.475,
+                  "v": -105,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.5,
+                  "v": -83,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.525,
+                  "v": -85,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.55,
+                  "v": -91,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.575,
+                  "v": -67,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.6,
+                  "v": -67,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.625,
+                  "v": -65,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.65,
+                  "v": -64,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.675,
+                  "v": -70,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.7,
+                  "v": -107,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.725,
+                  "v": -89,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.75,
+                  "v": -92,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.775,
+                  "v": -86,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.8,
+                  "v": -69,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.825,
+                  "v": -67,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.85,
+                  "v": -64,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.875,
+                  "v": -64,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.9,
+                  "v": -60,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.925,
+                  "v": -117,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.95,
+                  "v": -92,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 0.975,
+                  "v": -84,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "floor",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "floor-17",
+          "type": "shape",
+          "start": 2.85,
+          "duration": 6.15,
+          "props": {
+            "x": 0,
+            "y": 800,
+            "width": 1080,
+            "height": 280,
+            "fill": "#3A2416"
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 280,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 280,
+              "start": 5.65,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "type",
+      "kind": "text",
+      "clips": [
+        {
+          "id": "kicker-6",
+          "type": "text",
+          "start": 0.3,
+          "duration": 2.9,
+          "props": {
+            "text": "PODCAST  ·  EPISODE 42",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 600,
+            "color": "#9C3B1B",
+            "fontSize": 26,
+            "x": 64,
+            "y": 40,
+            "width": 600,
+            "height": 34.32
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-7",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.4,
+          "duration": 2.6,
+          "props": {
+            "text": "L",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 60,
+            "y": 66,
+            "width": 58,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.3,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-8",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.45,
+          "duration": 2.55,
+          "props": {
+            "text": "a",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 104,
+            "y": 66,
+            "width": 66.3,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.25,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-9",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.5,
+          "duration": 2.5,
+          "props": {
+            "text": "t",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 156.5,
+            "y": 66,
+            "width": 48.8,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.2,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-10",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.55,
+          "duration": 2.45,
+          "props": {
+            "text": "e",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 191.3,
+            "y": 66,
+            "width": 65.7,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.15,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-11",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.6,
+          "duration": 2.4,
+          "props": {
+            "text": "S",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 259.6,
+            "y": 66,
+            "width": 70.5,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.1,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-12",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.65,
+          "duration": 2.35,
+          "props": {
+            "text": "i",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 316.1,
+            "y": 66,
+            "width": 35.4,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.05,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-13",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.7,
+          "duration": 2.3,
+          "props": {
+            "text": "g",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 337.5,
+            "y": 66,
+            "width": 66.9,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-14",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.75,
+          "duration": 2.25,
+          "props": {
+            "text": "n",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 390.4,
+            "y": 66,
+            "width": 68.2,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.95,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-15",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.8,
+          "duration": 2.2,
+          "props": {
+            "text": "a",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 444.6,
+            "y": 66,
+            "width": 66.3,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.9,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "title-16",
+          "type": "text",
+          "scene": "sleeve",
+          "start": 0.85,
+          "duration": 2.15,
+          "props": {
+            "text": "l",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#3A2416",
+            "fontSize": 100,
+            "x": 497,
+            "y": 66,
+            "width": 35.4,
+            "height": 132
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": -120,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.85,
+              "duration": 0.25,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "ep-40",
+          "type": "text",
+          "scene": "play",
+          "start": 3.35,
+          "duration": 3,
+          "props": {
+            "text": "EP. 42  ·  48 MIN",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 600,
+            "color": "#E7A92F",
+            "fontSize": 26,
+            "x": 64,
+            "y": 850,
+            "width": 600,
+            "height": 34.32
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.4,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "ep-t-41",
+          "type": "text",
+          "scene": "play",
+          "start": 3.5,
+          "duration": 2.85,
+          "props": {
+            "text": "The",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F2E3C6",
+            "fontSize": 66,
+            "x": 62,
+            "y": 892,
+            "width": 116.49,
+            "height": 87.12
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 50,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "ep-t-42",
+          "type": "text",
+          "scene": "play",
+          "start": 3.58,
+          "duration": 2.77,
+          "props": {
+            "text": "sound",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F2E3C6",
+            "fontSize": 66,
+            "x": 181.988,
+            "y": 892,
+            "width": 193.644,
+            "height": 87.12
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 50,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "ep-t-43",
+          "type": "text",
+          "scene": "play",
+          "start": 3.66,
+          "duration": 2.69,
+          "props": {
+            "text": "of",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F2E3C6",
+            "fontSize": 66,
+            "x": 379.13,
+            "y": 892,
+            "width": 72.006,
+            "height": 87.12
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 50,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "ep-t-44",
+          "type": "text",
+          "scene": "play",
+          "start": 3.74,
+          "duration": 2.61,
+          "props": {
+            "text": "night",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F2E3C6",
+            "fontSize": 66,
+            "x": 454.634,
+            "y": 892,
+            "width": 160.05,
+            "height": 87.12
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 50,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "ep-t-45",
+          "type": "text",
+          "scene": "play",
+          "start": 3.82,
+          "duration": 2.53,
+          "props": {
+            "text": "buses",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F2E3C6",
+            "fontSize": 66,
+            "x": 618.182,
+            "y": 892,
+            "width": 188.694,
+            "height": 87.12
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 50,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "hosts-46",
+          "type": "text",
+          "scene": "play",
+          "start": 3.9,
+          "duration": 2.45,
+          "props": {
+            "text": "with Mara Ilić and Teo Banks",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#F2E3C6",
+            "fontSize": 32,
+            "x": 64,
+            "y": 986,
+            "width": 700,
+            "height": 42.24,
+            "opacity": 0.8
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "new-47",
+          "type": "text",
+          "scene": "weekly",
+          "start": 6.45,
+          "duration": 2.1,
+          "props": {
+            "text": "New",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F2E3C6",
+            "fontSize": 92,
+            "x": 185.432,
+            "y": 840,
+            "width": 198.812,
+            "height": 121.44
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "new-48",
+          "type": "text",
+          "scene": "weekly",
+          "start": 6.55,
+          "duration": 2,
+          "props": {
+            "text": "every",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F2E3C6",
+            "fontSize": 92,
+            "x": 389.12,
+            "y": 840,
+            "width": 243.708,
+            "height": 121.44
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "new-49",
+          "type": "text",
+          "scene": "weekly",
+          "start": 6.65,
+          "duration": 1.9,
+          "props": {
+            "text": "Friday",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F2E3C6",
+            "fontSize": 92,
+            "x": 637.704,
+            "y": 840,
+            "width": 270.664,
+            "height": 121.44
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "where-50",
+          "type": "text",
+          "scene": "weekly",
+          "start": 6.85,
+          "duration": 1.7,
+          "props": {
+            "text": "WHEREVER YOU GET PODCASTS",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 600,
+            "color": "#E7A92F",
+            "fontSize": 26,
+            "align": "center",
+            "x": 0,
+            "y": 970,
+            "width": 1080,
+            "height": 34.32
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
