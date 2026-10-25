@@ -7,6 +7,7 @@
 // button turns the voice-over on and off. The gallery plays at most four boards at once and none under reduced motion. The final cut never starts by itself; its big Play starts it from 0:00 with sound. On iPhone sizes the story fits between the bar and the sheet, the sheet sits on the visible bottom as the toolbar shows and hides (`phoneStory`), and memory comes back after scrolling the whole page twice with at most two live runtimes (`phoneMemory`). Then the guide (guide.html) at 360, 768 and 1440 px.
 // Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from '../build.mjs';
@@ -406,9 +407,20 @@ export async function phoneStory(page, { width, height, out }) {
   const stops = [...Array.from({ length: 11 }, (_, i) => i + 1), 11.4];
   for (const n of stops) {
     await toStep(n);
-    await wait(page, 1500);
+    // Just arrived, then settled: the step's boards are never a black frame, its end state is reached, and nothing of
+    // another step is drawn over its content.
+    await wait(page, 400);
+    for (const p of await stepContent(page, n, { settled: false })) problems.push(`step ${n}, on arrival: ${p}`);
+    await wait(page, 1100);
     for (const p of await measure()) problems.push(`step ${n}: ${p}`);
+    for (const p of await stepContent(page, n)) problems.push(`step ${n}: ${p}`);
     if (out && Number.isInteger(n)) await shot(`iphone-step-${String(n).padStart(2, '0')}.png`);
+  }
+  // And back up, step by step: the transitions the other way leave no earlier board over the new step.
+  for (let n = 10; n >= 1; n--) {
+    await toStep(n);
+    await wait(page, 1200);
+    for (const p of await stepContent(page, n)) problems.push(`step ${n}, scrolled back: ${p}`);
   }
   // The toolbar shows (a shorter visible viewport), then hides again: the sheet follows the bottom each time. (Emulation
   // shrinks svh with the viewport, and the story's length with it: the step is found again at each height; on a phone svh
@@ -430,6 +442,92 @@ export async function phoneStory(page, { width, height, out }) {
     await shot('iphone-gallery.png');
   }
   return problems;
+}
+
+/**
+ * The story's canvas on a phone at step `n`: what is drawn (boards, panels, the export dialog, by their effective opacity)
+ * splits into the step's content (half opaque or more) and faded leftovers; no two pieces of content overlap and no
+ * leftover lies over the content; board C wears the step's version (not "Rendering…"); and every board of the content shows
+ * a picture, never a near-uniform black frame (sampled from a screenshot).
+ */
+export async function stepContent(page, n, { settled = true } = {}) {
+  const s = await page.eval(`(() => {
+    const alpha = (el) => {
+      let a = 1;
+      for (let e = el; e && e !== document.body; e = e.parentElement) {
+        const cs = getComputedStyle(e);
+        if (cs.display === 'none' || cs.visibility === 'hidden') return 0;
+        a *= Number(cs.opacity);
+        const f = /opacity\\(([\\d.]+)\\)/.exec(e.style.filter); if (f) a *= Number(f[1]);
+      }
+      return el.getClientRects().length ? a : 0;
+    };
+    const room = { top: document.querySelector('.topbar').getBoundingClientRect().bottom, bottom: document.querySelector('.chat').getBoundingClientRect().top };
+    const els = [...document.querySelectorAll('.world > .board, .world > .panel, [data-stage] .export')]
+      .map((el) => ({ el, name: el.dataset.board ?? el.className.split(' ').at(-1), a: alpha(el), r: el.getBoundingClientRect() }))
+      .filter((e) => e.a > 0.05 && e.r.bottom > room.top && e.r.top < room.bottom);
+    const content = els.filter((e) => e.a >= 0.5); const faded = els.filter((e) => e.a < 0.5);
+    const hit = (p, q) => p.r.left < q.r.right - 1 && p.r.right > q.r.left + 1 && p.r.top < q.r.bottom - 1 && p.r.bottom > q.r.top + 1;
+    const out = [];
+    content.forEach((p, i) => content.slice(i + 1).forEach((q) => { if (hit(p, q)) out.push(p.name + ' and ' + q.name + ' are drawn over each other'); }));
+    for (const f of faded) for (const c of content) if (hit(f, c)) out.push(f.name + ' (another step\\'s, ' + f.a.toFixed(2) + ') lies over ' + c.name);
+    // Every poster laid out on the canvas is loaded (a version waits for its wipe under a clip-path that hides it all:
+    // left lazy, WebKit loads it only as the wipe reveals it, a black frame until then).
+    if (${settled}) for (const img of document.querySelectorAll('.world img.poster')) if (img.closest('[hidden]') === null && !(img.complete && img.naturalWidth > 0)) out.push('the poster of ' + img.closest('figure').dataset.composition + ' is laid out but not loaded');
+    const label = document.querySelector('[data-board="c"] .board__ver');
+    const want = label.dataset.versions.split(' ').map((x) => x.split(':')).filter(([k]) => Number(k) <= ${Math.floor(n)}).at(-1)[1];
+    if (label.textContent !== want) out.push('board C says "' + label.textContent + '", not ' + want);
+    const frames = content.map((e) => [e.name, e.el.querySelector(':scope > .board__frame')?.getBoundingClientRect()]).filter(([, r]) => r)
+      .map(([name, r]) => ({ name, x: Math.max(0, r.left), y: Math.max(room.top, r.top), w: Math.min(innerWidth, r.right) - Math.max(0, r.left), h: Math.min(room.bottom, r.bottom) - Math.max(room.top, r.top) }))
+      .filter((f) => f.w > 8 && f.h > 8);
+    return { out, frames, sx: scrollX, sy: scrollY };
+  })()`);
+  const problems = [...s.out];
+  // A composition may hold an empty frame for a moment (between two scenes): blank means blank three times over 1.6 s.
+  let blank = s.frames;
+  let last = {};
+  for (let i = 0; i < 3 && blank.length; i++) {
+    if (i) await wait(page, 800);
+    const still = [];
+    for (const f of blank) {
+      const { data } = await page.send('Page.captureScreenshot', { format: 'png', clip: { x: f.x + s.sx, y: f.y + s.sy, width: f.w, height: f.h, scale: 0.25 } });
+      const l = pngLuma(Buffer.from(data, 'base64'));
+      if (l.sd < MIN_BOARD_DEVIATION) { still.push(f); last[f.name] = l; }
+    }
+    blank = still;
+  }
+  for (const f of blank) problems.push(`board ${f.name} is a blank frame (luminance ${last[f.name].mean.toFixed(0)} ± ${last[f.name].sd.toFixed(1)}) for 1.6 s`);
+  return problems;
+}
+
+/** A board whose screenshot varies less than this (luminance standard deviation) shows no picture: black, or empty. */
+const MIN_BOARD_DEVIATION = 6;
+
+/** Mean and standard deviation of the luminance of an 8-bit, non-interlaced PNG (RGB or RGBA), as Chrome writes them. */
+export function pngLuma(buf) {
+  const width = buf.readUInt32BE(16); const height = buf.readUInt32BE(20); const type = buf[25];
+  const bpp = type === 6 ? 4 : 3;
+  const chunks = [];
+  for (let o = 8; o < buf.length;) {
+    const len = buf.readUInt32BE(o); const kind = buf.toString('ascii', o + 4, o + 8);
+    if (kind === 'IDAT') chunks.push(buf.subarray(o + 8, o + 8 + len));
+    o += 12 + len;
+  }
+  const raw = inflateSync(Buffer.concat(chunks));
+  const stride = width * bpp; const px = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y++) {
+    const f = raw[y * (stride + 1)];
+    for (let x = 0; x < stride; x++) {
+      const v = raw[y * (stride + 1) + 1 + x];
+      const a = x >= bpp ? px[y * stride + x - bpp] : 0; const b = y > 0 ? px[(y - 1) * stride + x] : 0; const c = x >= bpp && y > 0 ? px[(y - 1) * stride + x - bpp] : 0;
+      const pa = Math.abs(b - c); const pb = Math.abs(a - c); const pc = Math.abs(a + b - 2 * c);
+      const pred = f === 0 ? 0 : f === 1 ? a : f === 2 ? b : f === 3 ? (a + b) >> 1 : pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      px[y * stride + x] = (v + pred) & 255;
+    }
+  }
+  let sum = 0; let sq = 0; const n = width * height;
+  for (let i = 0; i < n; i++) { const l = 0.2126 * px[i * bpp] + 0.7152 * px[i * bpp + 1] + 0.0722 * px[i * bpp + 2]; sum += l; sq += l * l; }
+  return { mean: sum / n, sd: Math.sqrt(Math.max(0, sq / n - (sum / n) ** 2)) };
 }
 
 /**
