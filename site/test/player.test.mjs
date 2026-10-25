@@ -164,7 +164,9 @@ test('the poster stays until the runtime reports a played frame', () => {
   h.msg({ type: 'time', t: 2, playing: false });
   assert.ok(!h.classes.has('is-ready'), 'a paused frame keeps the poster');
   h.msg({ type: 'time', t: 2.03, playing: true });
-  assert.ok(h.classes.has('is-ready'));
+  assert.ok(!h.classes.has('is-ready'), 'one played frame: the poster stays (the frame may not be painted yet)');
+  h.msg({ type: 'time', t: 2.06, playing: true });
+  assert.ok(h.classes.has('is-ready'), 'frames moving on: the live frame takes over');
 });
 
 test('on ready it starts from the poster frame, so the handoff matches the poster', () => {

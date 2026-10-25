@@ -5,7 +5,7 @@
 // players are driven here by step (only the boards of the step on screen play), never by their own observers. With the
 // sound on, each step says its voice-over line once it settles (the subtitles step lets its board speak, in sync with
 // the subtitles it draws).
-import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover, visibleHeight, fitScale, focusOf } from './story-logic.js';
+import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover, visibleHeight, fitScale, focusOf, focusBetween } from './story-logic.js';
 import { soundButton } from './sound.js';
 
 export const STEPS = 11;
@@ -97,9 +97,11 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     world.style.setProperty('--lab', String(clamp(fit.s, 0.8, 1) / fit.s));
     stage.style.setProperty('--zoom', String(fit.s));
     stage.style.setProperty('--pan', `${fit.tx}px ${fit.ty}px`);
-    // On a phone only the framing's boards show: the rest of the world fades out rather than being cut by the bar or the sheet.
+    // On a phone only the step's boards show (those of its framing; between two steps, those of the two): the rest of the
+    // world is hidden, never cut by the bar or the sheet, nor drawn over the step's content as the camera passes it.
+    const framings = FRAMES.map((f) => table[f]);
     for (const [el, box] of placed) {
-      const f = size.narrow ? focusOf(box, rect) : 1;
+      const f = size.narrow ? focusBetween(box, framings, cam.k) : 1;
       el.style.filter = f < 1 ? `opacity(${f.toFixed(3)})` : '';
     }
     zoomLabel.textContent = `${Math.round(fit.s * 100)}%`;
@@ -244,6 +246,9 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   const render = () => {
     const t = tl.time();
     applyCamera();
+    // On a phone the export dialog is modal: the canvas behind it goes away (nothing of it drawn over the dialog).
+    if (size.narrow) world.style.opacity = String(1 - clamp(Number(exportBox.style.opacity || 0), 0, 1));
+    else world.style.opacity = '';
     // The step, the chat and the players change only at a step's start.
     const now = stepAt(t, STEPS);
     if (now !== step) setStep(now, step);
@@ -315,7 +320,12 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   // waits, and the first load fetches only the first steps' posters.
   const ranged = $$('[data-steps]');
   const layOut = (n) => {
-    for (const el of ranged) el.hidden = !parseSteps(el.dataset.steps).some(([a, b]) => n >= a - 1 && n <= b + 1);
+    for (const el of ranged) {
+      el.hidden = !parseSteps(el.dataset.steps).some(([a, b]) => n >= a - 1 && n <= b + 1);
+      // Laid out, its posters load now: a lazy image under a clip-path that hides it all (a version waiting for its wipe)
+      // counts as off screen, and would load only as the wipe reveals it, black until then.
+      if (!el.hidden) for (const img of el.querySelectorAll('img[loading="lazy"]')) img.loading = 'eager';
+    }
   };
   function setStep(n, before) {
     step = n;

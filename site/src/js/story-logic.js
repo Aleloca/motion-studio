@@ -102,3 +102,15 @@ export function focusOf([x, y, w, h], [fx, fy, fw, fh]) {
   const share = w > 0 && h > 0 ? (ix * iy) / (w * h) : 0;
   return clamp((share - 0.15) / 0.7, 0, 1);
 }
+
+/**
+ * How much a board shows on a phone while the camera moves between two framings (k between two indexes of `list`): its
+ * focus in the framing it leaves and in the one it reaches, in proportion. Not its focus in the rectangle in between: a
+ * camera passing over the boards of another step must not bring them back.
+ */
+export function focusBetween(box, list, k) {
+  const i = clamp(Math.floor(k), 0, list.length - 1);
+  const j = clamp(i + 1, 0, list.length - 1);
+  const p = clamp(k - i, 0, 1);
+  return lerp(focusOf(box, list[i]), focusOf(box, list[j]), p);
+}

@@ -80,6 +80,8 @@ export class CompositionPlayer {
     this.loopFrom = Number(figure.dataset.loopFrom ?? 0) || 0;
     /** The last time the runtime reported while playing: a smaller one means it wrapped to the start. */
     this.lastTime = 0;
+    /** The time of the first played frame the runtime reported since it was mounted. */
+    this.firstPlayed = null;
     this.frame = null;
     this.ready = false;
     /** null, or why the poster is shown for good: 'error' (the runtime refused it) or 'timeout' (retried on its return). */
@@ -141,6 +143,7 @@ export class CompositionPlayer {
 
   mount() {
     if (this.deps.budget && !this.deps.budget.acquire(this)) return;
+    this.firstPlayed = null;
     this.frame = this.deps.mount(this.src, this);
     this.timer = this.deps.setTimeout(() => this.fail('timeout'), READY_TIMEOUT_MS);
   }
@@ -262,8 +265,10 @@ export class CompositionPlayer {
       this.ended = true;
       this.emit();
     } else if (data.type === 'time' && data.playing === true && this.ready) {
-      // The poster goes only once the runtime is really playing frames: never a blank or unpainted frame.
-      this.figure.classList.add('is-ready');
+      // The poster goes only once the runtime is really playing frames (a second report, its time moved on): never a
+      // blank or unpainted frame, which WebKit can show for the first one.
+      if (this.firstPlayed === null) this.firstPlayed = data.t;
+      else if (data.t !== this.firstPlayed) this.figure.classList.add('is-ready');
       const wrapped = data.t < this.lastTime && data.t < this.loopFrom;
       this.lastTime = data.t;
       this.time = data.t;
