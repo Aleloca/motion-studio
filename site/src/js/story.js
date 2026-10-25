@@ -5,7 +5,7 @@
 // players are driven here by step (only the boards of the step on screen play), never by their own observers. With the
 // sound on, each step says its voice-over line once it settles (the subtitles step lets its board speak, in sync with
 // the subtitles it draws).
-import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover } from './story-logic.js';
+import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover, visibleHeight, fitScale, focusOf, focusBetween } from './story-logic.js';
 import { soundButton } from './sound.js';
 
 export const STEPS = 11;
@@ -49,6 +49,13 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   const $$ = (sel, root = stage) => [...root.querySelectorAll(sel)];
   const board = (id) => $(`[data-board="${id}"]`);
 
+  // The pinned canvas is as tall as the visible viewport: on a phone it follows the browser's toolbars as they show and hide.
+  const root = document.documentElement;
+  const followViewport = () => { const h = visibleHeight(window.visualViewport); if (h) root.style.setProperty('--vvh', `${h}px`); };
+  followViewport();
+  window.visualViewport?.addEventListener('resize', followViewport);
+  addEventListener('resize', followViewport);
+
   const steps = [...story.querySelectorAll('.step')].map(readStep);
   const chat = buildChat(steps, story.querySelector('.story__note')?.textContent ?? '');
   pin.append(chat.el);
@@ -65,8 +72,16 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
       // The bottom sheet covers the canvas: frame above it, as tall as it is now (it grows with the step's exchange).
       sheet: narrow ? sheetCover({ stageBottom: r.bottom, sheetTop: chat.el.getBoundingClientRect().top, open: chat.el.classList.contains('is-open'), previous: size.sheet }) : 0,
     };
+    // The canvas ends at the sheet; a dialog over it (the export) fits the room between the bar and the sheet.
+    stage.style.setProperty('--sheet', `${size.sheet}px`);
+    fitDialog();
+    placed = $$('.world > .board, .world > .panel').map((el) => { const b = boxOf(el); return [el, [b.x, b.y, b.w, b.h]]; });
   };
+  let placed = [];
+  const fitDialog = () => stage.style.setProperty('--fit', String(size.narrow ? fitScale(exportBox.offsetHeight, size.h - size.sheet - 24) : 1));
   let scale = 1;
+  /** The framing on screen, in stage pixels (for the site's checks). */
+  let frame = null;
   const applyCamera = () => {
     const table = size.narrow ? NARROW : WIDE;
     const rect = framingAt(FRAMES.map((f) => table[f]), cam.k);
@@ -75,12 +90,20 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     const pad = size.narrow ? { t: 26, r: 16, b: 18, l: 16 } : { t: 44, r: 40, b: lerp(28, 92, clamp(cam.k, 0, 1)), l: 40 };
     const fit = cameraFit(rect, { w: size.w, h: size.h }, { top: top + pad.t, right: pad.r, bottom: size.sheet + pad.b, left: pad.l });
     scale = fit.s;
+    frame = { left: rect[0] * fit.s + fit.tx, top: rect[1] * fit.s + fit.ty, width: rect[2] * fit.s, height: rect[3] * fit.s };
     world.style.transform = `translate(${fit.tx}px, ${fit.ty}px) scale(${fit.s})`;
     world.style.setProperty('--inv', String(1 / fit.s));
     // Labels keep their size down to 80% zoom, then shrink with the canvas (never wider than their board).
     world.style.setProperty('--lab', String(clamp(fit.s, 0.8, 1) / fit.s));
     stage.style.setProperty('--zoom', String(fit.s));
     stage.style.setProperty('--pan', `${fit.tx}px ${fit.ty}px`);
+    // On a phone only the step's boards show (those of its framing; between two steps, those of the two): the rest of the
+    // world is hidden, never cut by the bar or the sheet, nor drawn over the step's content as the camera passes it.
+    const framings = FRAMES.map((f) => table[f]);
+    for (const [el, box] of placed) {
+      const f = size.narrow ? focusBetween(box, framings, cam.k) : 1;
+      el.style.filter = f < 1 ? `opacity(${f.toFixed(3)})` : '';
+    }
     zoomLabel.textContent = `${Math.round(fit.s * 100)}%`;
   };
   const zoomLabel = $('.toolbar__zoom');
@@ -223,6 +246,9 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   const render = () => {
     const t = tl.time();
     applyCamera();
+    // On a phone the export dialog is modal: the canvas behind it goes away (nothing of it drawn over the dialog).
+    if (size.narrow) world.style.opacity = String(1 - clamp(Number(exportBox.style.opacity || 0), 0, 1));
+    else world.style.opacity = '';
     // The step, the chat and the players change only at a step's start.
     const now = stepAt(t, STEPS);
     if (now !== step) setStep(now, step);
@@ -266,8 +292,16 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   /* ---------------------------------------------------------------- steps: chat, caption, players */
   const stagePlayers = players.filter((p) => stage.contains(p.figure));
   let onScreen = true;
+  // On a phone only the boards in the step's framing play (the others are faded out): the page's budget of live runtimes is
+  // two there. Between the step's boards the newest change wins a slot (`priority`, its place in LIVE).
+  const inFraming = (id) => {
+    if (!size.narrow) return true;
+    const b = boxOf(board(id));
+    return focusOf([b.x, b.y, b.w, b.h], NARROW[FRAMES[step]]) >= 0.5;
+  };
   const syncPlayers = () => {
-    const live = new Set(LIVE[step] ?? []);
+    const order = LIVE[step] ?? [];
+    const live = new Set(order.filter(inFraming));
     const next = new Set(size.narrow ? [] : LIVE[step + 1] ?? []);
     for (const p of stagePlayers) {
       const f = p.figure;
@@ -276,7 +310,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
       const plays = onScreen && live.has(id) && (!own || inSteps(own, step));
       const soon = onScreen && next.has(id) && (!own || inSteps(own, step + 1));
       const still = f.dataset.still ? inSteps(parseSteps(f.dataset.still), step) : false;
-      p.update({ near: plays || soon, visible: plays, still });
+      p.update({ near: plays || soon, visible: plays, still, priority: order.indexOf(id) + 1 });
     }
   };
   // The players follow once the step settles: a fast scroll (or the jump to the final cut) passes steps without
@@ -286,11 +320,17 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   // waits, and the first load fetches only the first steps' posters.
   const ranged = $$('[data-steps]');
   const layOut = (n) => {
-    for (const el of ranged) el.hidden = !parseSteps(el.dataset.steps).some(([a, b]) => n >= a - 1 && n <= b + 1);
+    for (const el of ranged) {
+      el.hidden = !parseSteps(el.dataset.steps).some(([a, b]) => n >= a - 1 && n <= b + 1);
+      // Laid out, its posters load now: a lazy image under a clip-path that hides it all (a version waiting for its wipe)
+      // counts as off screen, and would load only as the wipe reveals it, black until then.
+      if (!el.hidden) for (const img of el.querySelectorAll('img[loading="lazy"]')) img.loading = 'eager';
+    }
   };
   function setStep(n, before) {
     step = n;
     layOut(n);
+    fitDialog();
     const s = steps[n - 1];
     chat.show(n, before);
     caption.n.textContent = String(n).padStart(2, '0');
@@ -311,9 +351,11 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   let voiceTimer = null;
   let fadeRaf = 0;
   const voiceTile = board('genvoice'); const musicTile = board('genmusic');
+  // A sound that stops lets go of its media (a paused element keeps its decoded audio until it is collected).
+  const release = (a) => { a.pause(); a.removeAttribute('src'); a.load(); };
   const stopLine = () => {
     cancelAnimationFrame(fadeRaf);
-    if (line) { line.pause(); line = null; }
+    if (line) { release(line); line = null; }
     for (const t of [voiceTile, musicTile]) t.classList.remove('is-playing');
   };
   /**
@@ -323,7 +365,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   function playClip(src, { tile = null, seconds = 0, then = null } = {}) {
     const a = new Audio(src);
     line = a;
-    const done = () => { cancelAnimationFrame(fadeRaf); tile?.classList.remove('is-playing'); if (line === a) { line = null; then?.(); } };
+    const done = () => { cancelAnimationFrame(fadeRaf); tile?.classList.remove('is-playing'); release(a); if (line === a) { line = null; then?.(); } };
     if (tile) {
       a.addEventListener('playing', () => tile.classList.add('is-playing'));
       a.addEventListener('timeupdate', () => tile.style.setProperty('--p', String(clamp(a.currentTime / (seconds || a.duration || 1), 0, 1))));
@@ -380,7 +422,15 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   }
   if (sound) {
     const btn = story.querySelector('.story__sound');
-    if (btn) { btn.hidden = false; soundButton(btn, sound); }
+    if (btn) {
+      btn.hidden = false;
+      soundButton(btn, sound);
+      // On a phone the switch lives in the bar, where it never covers the canvas; back over the canvas on a wide screen.
+      const home = btn.parentElement; const bar = document.querySelector('.topbar__nav');
+      const place = () => { if (narrowQuery.matches && bar) bar.prepend(btn); else home.append(btn); };
+      place();
+      narrowQuery.addEventListener('change', place);
+    }
     sound.onChange(() => { clearTimeout(voiceTimer); speak(); });
   }
   const lineItems = $$('.lines__list li');
@@ -410,7 +460,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   resized.observe(chat.el);
   narrowQuery.addEventListener('change', () => { onResize(); syncPlayers(); });
   stage.classList.add('is-live');
-  return { timeline: tl, get step() { return step; }, get speaking() { return line ? { src: line.src, paused: line.paused } : null; } };
+  return { timeline: tl, get step() { return step; }, get frame() { return frame; }, get speaking() { return line ? { src: line.src, paused: line.paused } : null; } };
 }
 
 /* ---------------------------------------------------------------- the chat panel, built from the steps */
@@ -441,8 +491,9 @@ function buildChat(steps, note) {
   const exchanges = steps.map((s) => {
     const ex = h('div', { class: 'ex', 'data-step': String(s.n) });
     ex.hidden = true;
-    if (s.you) ex.append(h('p', { class: 'who who--you' }, [h('b', {}, 'You')]), h('p', { class: 'msg msg--you' }, s.you));
-    if (s.event) ex.append(h('p', { class: 'msg msg--event' }, s.event));
+    // The text in its own span: on a phone it is clamped to two lines inside the bubble's padding.
+    if (s.you) ex.append(h('p', { class: 'who who--you' }, [h('b', {}, 'You')]), h('p', { class: 'msg msg--you' }, h('span', { class: 'msg__text' }, s.you)));
+    if (s.event) ex.append(h('p', { class: 'msg msg--event' }, h('span', { class: 'msg__text' }, s.event)));
     if (s.agent) {
       const agent = [h('p', { class: 'who' }, [h('span', { class: 'avatar' }), h('b', {}, 'Agent'), h('span', { class: 'tag' }, 'Summary')]), h('p', { class: 'msg msg--agent' }, s.agent)];
       // A paid call: the approval card the app shows before it, then the answer.

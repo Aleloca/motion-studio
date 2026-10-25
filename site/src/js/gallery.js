@@ -1,5 +1,6 @@
 // The home's gallery: each board plays its composition while it is on screen, muted and looping, at most four at once
-// (the most visible ones), with at most six runtimes mounted; the others hold their poster. Under reduced motion nothing
+// (the most visible ones), with at most six runtimes mounted, and never past the page's budget of live runtimes (two on
+// a phone, see player.js); the others hold their poster. Under reduced motion nothing
 // mounts: the boards are their posters. The players are made by mountPlayers, which leaves these figures to us.
 import { pickGallery } from './gallery-logic.js';
 
@@ -12,7 +13,7 @@ export function startGallery(players, win = window) {
   const apply = () => {
     queued = false;
     const reducedMotion = motion.matches;
-    const { playing, mounted } = pickGallery(list.map((p) => state.get(p.figure)), { reducedMotion });
+    const { playing, mounted } = pickGallery(list.map((p) => state.get(p.figure)), { reducedMotion, budget: players.budget?.limit ?? Infinity });
     list.forEach((p, i) => p.update({ near: mounted.has(i), visible: playing.has(i), reducedMotion }));
   };
   const schedule = () => { if (!queued) { queued = true; win.requestAnimationFrame(apply); } };

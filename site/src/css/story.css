@@ -15,7 +15,7 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
 /* The app's bar */
 .topbar { position: fixed; inset: 0 0 auto; z-index: 20; height: var(--topbar); border-bottom: 1px solid var(--c-line);
   background: color-mix(in srgb, var(--c-stage) 86%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4); }
-.topbar__inner { display: flex; align-items: center; gap: 14px; height: 100%; padding: 0 clamp(12px, 2vw, 24px); }
+.topbar__inner { display: flex; align-items: center; gap: 14px; height: 100%; padding: 0 max(clamp(12px, 2vw, 24px), env(safe-area-inset-right)) 0 max(clamp(12px, 2vw, 24px), env(safe-area-inset-left)); }
 .topbar__brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
 .topbar__brand img { width: 28px; height: 28px; }
 .topbar__name { font: 700 17px/1 var(--f-display); letter-spacing: -0.01em; }
@@ -29,7 +29,10 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
 .topbar__link:hover { color: var(--c-text); }
 .topbar__download { gap: 8px; min-height: 36px; padding: 0 14px; font-size: 14px; border-color: color-mix(in srgb, var(--c-orange) 70%, transparent); color: #FF8A5C; }
 .topbar__download:hover { border-color: var(--c-orange); background: color-mix(in srgb, var(--c-orange) 14%, transparent); }
-@media (max-width: 720px) { .topbar__crumb, .topbar__link { display: none; } }
+/* On a phone the bar offers Get it (the install section, where the macOS download is) and, during the story, the sound
+   switch (story.js moves it here: over the canvas it would cover the boards). */
+.topbar__get { display: none; }
+@media (max-width: 720px) { .topbar__crumb, .topbar__link, .topbar__download { display: none; } .topbar__get { display: inline-flex; min-height: 34px; padding: 0 14px; font-size: 14px; } .topbar__nav { gap: 8px; } }
 @media (max-width: 420px) { .topbar__for { display: none; } }
 .btn .i { margin-left: -2px; }
 
@@ -92,7 +95,8 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
 
 /* ------------------------------------------------------------------ the live story (motion allowed, JS running) */
 .js-motion .story { height: calc(100svh + var(--seg, 130svh) * 11.6); padding-top: 0; }
-.js-motion .story__pin { position: sticky; top: 0; height: 100svh; padding: calc(var(--topbar) + 12px) 12px 12px; display: grid; grid-template-columns: minmax(0, 1fr) var(--chat-w); gap: 12px; }
+/* As tall as the visible viewport (--vvh, from story.js), which grows and shrinks with a phone browser's toolbars. */
+.js-motion .story__pin { position: sticky; top: 0; height: var(--vvh, 100dvh); padding: calc(var(--topbar) + 12px) 12px 12px; display: grid; grid-template-columns: minmax(0, 1fr) var(--chat-w); gap: 12px; }
 .js-motion .story__canvas { overflow: hidden; border-radius: 20px; border: 1px solid var(--c-line); background: var(--c-stage); }
 .js-motion .intro { position: absolute; top: 0; left: 0; padding: clamp(24px, 3vw, 40px); max-width: min(720px, 92%); pointer-events: none; }
 .js-motion .intro > * { pointer-events: auto; }
@@ -105,7 +109,8 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
 .js-motion .step__result { display: none; }
 
 [data-stage] [hidden] { display: none !important; }
-.world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; will-change: transform; --inv: 1; }
+/* No will-change: the world spans every board, and a layer that size is kept for good (memory on a phone). */
+.world { position: absolute; left: 0; top: 0; z-index: 0; width: 0; height: 0; transform-origin: 0 0; --inv: 1; }
 .board, .panel { --X: var(--x); --Y: var(--y); --W: var(--w); --H: var(--h); position: absolute; left: calc(var(--X) * 1px); top: calc(var(--Y) * 1px); width: calc(var(--W) * 1px); height: calc(var(--H) * 1px); }
 /* Narrow screens lay the world out in a column (a portrait canvas): boards and panels with a phone place use it. */
 @media (max-width: 959px) { .board, .panel { --X: var(--px, var(--x)); --Y: var(--py, var(--y)); --W: var(--pw, var(--w)); --H: var(--ph, var(--h)); } }
@@ -209,7 +214,10 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
 .sound-btn.is-on { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-orange) 70%, transparent), 0 12px 28px -12px #000; }
 .sound-btn:focus-visible, .player-bar__sound:focus-visible { outline: 2px solid var(--c-orange); outline-offset: 2px; }
 .story__sound { position: absolute; top: 14px; right: 14px; z-index: 7; }
-@media (max-width: 959px) { .story__sound { top: 10px; right: 10px; min-height: 34px; padding: 0 12px 0 10px; font-size: 12.5px; } }
+/* On a phone, in the bar (story.js moves it): compact, never over the canvas. */
+.topbar .story__sound { position: static; flex: none; min-height: 34px; padding: 0 12px 0 10px; font-size: 12.5px; box-shadow: 0 0 0 1px #3A3A3A; }
+.topbar .story__sound.is-on { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-orange) 70%, transparent); }
+@media (max-width: 380px) { .topbar .story__sound { padding: 0 9px; } .topbar .sound-btn__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } }
 .player-bar__sound .i--sound, .player-bar__sound.is-on .i--muted { display: none; }
 .player-bar__sound.is-on .i--sound { display: block; }
 .player-bar__sound.is-on { color: var(--c-orange); }
@@ -286,7 +294,9 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
 
 /* Narrow screens: the canvas above, the chat as a bottom sheet showing the current exchange */
 @media (max-width: 959px) {
-  .js-motion .story__pin { grid-template-columns: minmax(0, 1fr); padding: var(--topbar) 0 0; gap: 0; }
+  .js-motion .story__pin { grid-template-columns: minmax(0, 1fr); padding: var(--topbar) env(safe-area-inset-right) 0 env(safe-area-inset-left); gap: 0; }
+  /* The canvas ends where the sheet starts (--sheet, from story.js): nothing of it goes on under the sheet. */
+  .js-motion .stage { clip-path: inset(0 0 var(--sheet, 0px) 0); }
   .js-motion .story__canvas { border-radius: 0; border: 0; }
   .js-motion .intro { padding: 20px var(--gutter); max-width: 100%; }
   .js-motion .intro__title { font-size: clamp(34px, 9vw, 52px); margin-bottom: 12px; }
@@ -296,7 +306,7 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
   .js-motion .intro .btn--primary { display: none; }
   .toolbar, .caption { display: none; }
   .chat { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; max-height: 32%; border-radius: 22px 22px 0 0; border-bottom: 0;
-    box-shadow: 0 -18px 40px -16px #000; padding-top: 10px; cursor: pointer; transition: max-height .35s var(--ease-out); }
+    box-shadow: 0 -18px 40px -16px #000; padding-top: 10px; padding-bottom: env(safe-area-inset-bottom); cursor: pointer; transition: max-height .35s var(--ease-out); }
   .chat.is-open { max-height: 62%; }
   .chat__more { color: var(--c-muted); letter-spacing: 0; text-transform: none; }
   .chat__more::after { content: 'Show the answer'; }
@@ -305,8 +315,9 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
   .ex .ex__agent { display: none !important; }
   .chat.is-open .ex .ex__agent { display: contents !important; }
   .chat.is-open .ex__what { display: none; }
-  .ex .msg--you, .ex .msg--event { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-  .chat.is-open .ex .msg--you, .chat.is-open .ex .msg--event { -webkit-line-clamp: unset; }
+  /* Two lines and an ellipsis: clamped inside the bubble's padding, so no third line peeks out under the second. */
+  .ex .msg__text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .chat.is-open .ex .msg__text { display: inline; -webkit-line-clamp: unset; }
   .chat::before { content: ''; align-self: center; width: 40px; height: 4px; border-radius: 2px; background: #444; margin-bottom: 8px; }
   .chat__tabs, .chat__composer, .chat__note { display: none; }
   .chat__mark { display: flex; justify-content: space-between; margin: 0; padding: 0 16px 6px; font: 500 12px/1.3 var(--f-mono); letter-spacing: .04em; text-transform: uppercase; color: var(--c-orange); }
@@ -316,7 +327,10 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
   .msg { font-size: 14.5px; }
   .ex .msg--you { margin-left: 36px; }
   .ex .msg--agent { margin-right: 36px; }
-  .export { width: calc(100% - 24px); padding: 16px; }
+  /* The export dialog: centred in the room between the bar and the sheet, shrunk to fit it (--fit, from story.js), over a
+     scrim like the app's dialogs. */
+  .export { top: calc((100% - var(--sheet, 0px)) / 2); width: calc(100% - 24px); padding: 16px; scale: var(--fit, 1);
+    box-shadow: 0 0 0 1px #2E2E2E, 0 40px 80px -20px #000, 0 0 0 100vmax color-mix(in srgb, var(--c-stage) 62%, transparent); }
 }
 
 /* ------------------------------------------------------------------ the final cut */

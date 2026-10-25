@@ -77,3 +77,40 @@ export const parseSteps = (s) => String(s).trim().split(/\s+/).map((part) => {
   return [a, b ?? a];
 });
 export const inSteps = (ranges, n) => ranges.some(([a, b]) => n >= a && n <= b);
+
+/**
+ * The height the pinned canvas takes: the visible viewport's, which on a phone changes as the browser's toolbars show and
+ * hide (100svh would leave an empty band under the sheet once they hide). A pinch zoom shrinks the visual viewport, not
+ * the page: its scale is taken back out. Null without the Visual Viewport API (the CSS falls back to 100dvh).
+ * @param {{ height: number, scale: number } | null} vv window.visualViewport
+ */
+export const visibleHeight = (vv) => (vv ? Math.round(vv.height * (vv.scale || 1)) : null);
+
+/** The scale that fits a box `height` tall into `room`: smaller when it does not fit, never larger. */
+export const fitScale = (height, room) => (height > room && height > 0 ? room / height : 1);
+
+/**
+ * How much a board shows on a phone's canvas (0-1): the share of it inside the camera's framing, eased so that a board
+ * mostly in is whole and one barely in is gone. The narrow canvas shows only the step's own content; the rest of the
+ * world fades as the camera leaves it, never cut by the bar or the sheet.
+ * @param {number[]} box [x, y, w, h] of the board, in world units
+ * @param {number[]} frame [x, y, w, h] of the framing, in world units
+ */
+export function focusOf([x, y, w, h], [fx, fy, fw, fh]) {
+  const ix = Math.max(0, Math.min(x + w, fx + fw) - Math.max(x, fx));
+  const iy = Math.max(0, Math.min(y + h, fy + fh) - Math.max(y, fy));
+  const share = w > 0 && h > 0 ? (ix * iy) / (w * h) : 0;
+  return clamp((share - 0.15) / 0.7, 0, 1);
+}
+
+/**
+ * How much a board shows on a phone while the camera moves between two framings (k between two indexes of `list`): its
+ * focus in the framing it leaves and in the one it reaches, in proportion. Not its focus in the rectangle in between: a
+ * camera passing over the boards of another step must not bring them back.
+ */
+export function focusBetween(box, list, k) {
+  const i = clamp(Math.floor(k), 0, list.length - 1);
+  const j = clamp(i + 1, 0, list.length - 1);
+  const p = clamp(k - i, 0, 1);
+  return lerp(focusOf(box, list[i]), focusOf(box, list[j]), p);
+}

@@ -24,3 +24,9 @@ test('under reduced motion nothing is mounted: the boards keep their posters', (
   assert.equal(s.mounted.size, 0);
   assert.equal(s.playing.size, 0);
 });
+
+test('within the page\'s budget of live runtimes (two on a phone): no more mounted or playing than it allows', () => {
+  const s = pickGallery([at(1), at(0.9), at(1), at(0.8), at(0, true)], { budget: 2 });
+  assert.equal(s.mounted.size, 2);
+  assert.deepEqual([...s.playing].sort(), [0, 2]);
+});

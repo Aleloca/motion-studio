@@ -33,9 +33,15 @@ motion. With motion, `story.js` builds the chat panel from
 the steps and drives the canvas (`[data-stage]`): a world of boards and panels placed with `--x/--y/--w/--h` (and
 `--px/--py/--pw/--ph` on narrow screens), each shown in its `data-steps`; one GSAP timeline, driven by the scroll (smoothed like a scrub) through `scrollToTime`, moves
 the camera and brings each change in place (each step's scroll: 45% its change, 40% a hold on the finished state, 15% the
-next request typed and sent), and the boards' players are driven by step (only the step's boards play). The
+next request typed and sent), and the boards' players are driven by step (only the step's boards play). On a phone the canvas is as tall as the visible viewport (`--vvh`, which follows the browser's toolbars), the chat is a bottom sheet, the camera frames the step between the bar and the sheet and the boards outside its framing fade out; the sound switch and a Get it link sit in the bar. The
 final cut (`figure[data-final-cut]`, `data-autoplay="false"`) is a composition player with controls (`js/final-cut.js`): it never
 starts by itself; its big Play starts it from 0:00 with the sound on.
+
+Live runtimes are costly (each is a page, and each of its html layers a frame; on iOS they all share one content process):
+the page holds at most two at once on a phone (a touch screen or under 960 px) and four on a computer (`LIVE_BUDGET` in
+`js/player.js`). A player past the budget waits on its poster; one that leaves the screen's surroundings is unloaded
+(`about:blank`, then removed), never kept paused. The final cut has no runtime until its Play. Each composition has a
+half-size poster (`poster-half.webp`, written by `scripts/posters.mjs`, `--half` to redo only those) that phones load.
 
 Sound (`js/sound.js`) is off until the viewer asks for it: one switch for the page, turned on by the story's "Sound on"
 button or by Play on the final cut (unless the viewer switched it off). With the sound on, each step says its voice-over

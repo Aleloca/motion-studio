@@ -11,7 +11,7 @@ test('the launch film is exactly what its generator writes (edit the generator, 
   const out = tempDir('ms-launch-gen-');
   assert.deepEqual(generate(out), [], 'every text width is measured in widths.json');
   for (const id of LAUNCH_IDS) {
-    const repo = walk(join(SITE, 'compositions', id)).filter((f) => f !== 'poster.webp' && !isGeneratedMedia(f)).sort();
+    const repo = walk(join(SITE, 'compositions', id)).filter((f) => !f.startsWith('poster') && !isGeneratedMedia(f)).sort();
     assert.deepEqual(walk(join(out, id)).filter((f) => !isGeneratedMedia(f)).sort(), repo, `${id}: files`);
     for (const f of repo) assert.ok(readFileSync(join(out, id, f)).equals(readFileSync(join(SITE, 'compositions', id, f))), `${id}/${f} differs from the generator's output`);
   }

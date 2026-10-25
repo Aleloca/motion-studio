@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cameraFit, framingAt, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover, PACE } from '../src/js/story-logic.js';
+import { cameraFit, framingAt, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover, PACE, visibleHeight, fitScale, focusOf, focusBetween } from '../src/js/story-logic.js';
 import { formatTime } from '../src/js/final-cut.js';
 import { SIGNAL, TEXT, titleSize, BRAND } from '../scripts/hero-gen/story.mjs';
 import { SITE } from './helpers.mjs';
@@ -22,6 +22,47 @@ test('on a phone the camera frames above the bottom sheet as tall as it is now; 
   assert.equal(sheetCover({ stageBottom: 844, sheetTop: 690, open: false, previous: 120 }), 154);
   assert.equal(sheetCover({ stageBottom: 844, sheetTop: 900, open: false, previous: 120 }), 0);
   assert.equal(sheetCover({ stageBottom: 844, sheetTop: 400, open: true, previous: 154 }), 154);
+});
+
+test('the pinned canvas is as tall as the visible viewport, whatever the toolbar does; a pinch zoom does not shrink it', () => {
+  assert.equal(visibleHeight({ height: 760, scale: 1 }), 760);
+  assert.equal(visibleHeight({ height: 844, scale: 1 }), 844);
+  // Zoomed in twice: the visual viewport is half as tall, the layout one is not.
+  assert.equal(visibleHeight({ height: 422, scale: 2 }), 844);
+  assert.equal(visibleHeight(null), null);
+  const css = readFileSync(join(SITE, 'src', 'css', 'story.css'), 'utf8');
+  const pin = /\.js-motion \.story__pin \{[^}]*\}/.exec(css)[0];
+  assert.match(pin, /height: var\(--vvh, 100dvh\)/, 'the pin follows the visible viewport, not 100svh');
+});
+
+test('on a phone a dialog over the canvas shrinks to fit the room between the bar and the sheet, never grows', () => {
+  assert.equal(fitScale(370, 494), 1);
+  assert.equal(fitScale(400, 300), 0.75);
+  assert.equal(fitScale(0, 300), 1);
+});
+
+test('on a phone a board shows only inside the framing: whole when in it, gone when out of it, fading on the way', () => {
+  const frame = [0, 0, 500, 600];
+  assert.equal(focusOf([10, 10, 480, 270], frame), 1);
+  assert.equal(focusOf([10, 700, 480, 270], frame), 0);
+  // A board a third in (as the camera leaves it) is fading; one barely in is gone.
+  const third = focusOf([10, 510, 480, 270], frame);
+  assert.ok(third > 0 && third < 1, String(third));
+  assert.equal(focusOf([10, 590, 480, 270], frame), 0);
+  // Most of it in: whole.
+  assert.equal(focusOf([10, 360, 480, 270], frame), 1);
+});
+
+test('on a phone, between two steps, only the boards of those two steps show: the camera passing over a third leaves it hidden', () => {
+  // Three framings stacked down the world; the board sits in the middle one only.
+  const list = [[0, 0, 500, 300], [0, 1000, 500, 300], [0, 2000, 500, 300]];
+  const middle = [10, 1010, 480, 270]; const first = [10, 10, 480, 270];
+  // From step 0 to step 2 directly (k 0 → 2 passes through 1): never more than... the middle board is in framing 1.
+  assert.equal(focusBetween(first, list, 0), 1);
+  assert.equal(focusBetween(first, list, 0.25), 0.75, 'fades out as the camera leaves');
+  assert.equal(focusBetween(middle, list, 0.5), 0.5);
+  assert.equal(focusBetween(middle, list, 1), 1);
+  assert.equal(focusBetween(middle, [list[0], list[2]], 0.5), 0, 'a board between two framings, in neither: hidden all the way');
 });
 
 test('between two framings the camera moves in proportion, and holds past the ends', () => {

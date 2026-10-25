@@ -10,7 +10,7 @@ import { instancePreset } from '../../packages/shared/src/format-instance.ts';
 import { renderRuntimePage } from '../../packages/composition-runtime/src/page.ts';
 
 /** Files of a composition folder that belong to the site, not to the composition. */
-export const SITE_ONLY_FILES = new Set(['meta.json', 'poster.webp', 'subtitles.json']);
+export const SITE_ONLY_FILES = new Set(['meta.json', 'poster.webp', 'poster-half.webp', 'subtitles.json']);
 
 /**
  * The site's own fonts (site/src/assets/fonts/*.woff2) are shared by every composition: the build copies them into each
