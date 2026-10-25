@@ -46,6 +46,14 @@ test('every composition has a poster.webp of its own size', () => {
   }
 });
 
+test('every composition has a poster-half.webp at half its size (what a phone loads)', () => {
+  for (const item of items) {
+    const p = join(item.dir, 'poster-half.webp');
+    assert.ok(existsSync(p), `${item.id}: poster-half.webp`);
+    assert.deepEqual(webpSize(readFileSync(p)), { width: Math.round(item.composition.width / 2), height: Math.round(item.composition.height / 2) }, item.id);
+  }
+});
+
 test('the hero creatives are rich: several scenes, 8 to 15 s, svg art made by hand, no raster', () => {
   for (const item of items.filter((i) => /^(kova|tidefall|fernwise)-/.test(i.id))) {
     const c = item.composition;

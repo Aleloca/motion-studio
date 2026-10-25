@@ -11,7 +11,7 @@ test('the gallery\'s compositions are exactly what the generator writes (edit th
   assert.deepEqual(missing, [], 'every text width is measured in widths.json');
   assert.deepEqual(ids, GALLERY_IDS);
   for (const id of ids) {
-    const repo = walk(join(SITE, 'compositions', id)).filter((f) => f !== 'poster.webp').sort();
+    const repo = walk(join(SITE, 'compositions', id)).filter((f) => !f.startsWith('poster')).sort();
     assert.deepEqual(walk(join(out, id)).sort(), repo, `${id}: files`);
     for (const f of repo) assert.ok(readFileSync(join(out, id, f)).equals(readFileSync(join(SITE, 'compositions', id, f))), `${id}/${f} differs from the generator's output`);
   }

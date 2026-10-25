@@ -9,7 +9,7 @@ test('the hero and story compositions are exactly what the generator writes (edi
   const out = tempDir('ms-hero-gen-');
   assert.deepEqual(generate(out), [], 'every text width is measured in widths.json');
   for (const id of [...HERO_IDS, ...STORY_IDS]) {
-    const repo = walk(join(SITE, 'compositions', id)).filter((f) => f !== 'poster.webp' && !isGeneratedMedia(f)).sort();
+    const repo = walk(join(SITE, 'compositions', id)).filter((f) => !f.startsWith('poster') && !isGeneratedMedia(f)).sort();
     assert.deepEqual(walk(join(out, id)).filter((f) => !isGeneratedMedia(f)).sort(), repo, `${id}: files`);
     for (const f of repo) assert.ok(readFileSync(join(out, id, f)).equals(readFileSync(join(SITE, 'compositions', id, f))), `${id}/${f} differs from the generator's output`);
   }
