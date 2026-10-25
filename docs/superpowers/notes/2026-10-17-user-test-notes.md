@@ -669,6 +669,13 @@ arrives and worked on later together.
 88. **Steps frozen after a reload at the bottom (user report of 2026-10-25).** Done (decisions 1905-1907): CSS smooth
     scrolling made ScrollTrigger measure the story offset by the restored scroll; scrolling is instant now (in-page
     links still glide) and check.mjs reloads at the bottom, at #final-cut and mid-story and walks the steps both ways.
+89. **The home on a real iPhone (user report of 2026-10-25).** Black band under the sheet, clipped text, the
+    macOS download and Sound covering content, export hidden; then the tab crashed after scrolling (WebKit memory),
+    step 9's board went black and step 11 showed older boards over the export.
+    Done (decisions 1908-1924): sheet pinned to the visual viewport, "Get it" and Sound in the bar, whole lines; at
+    most two live runtimes on a phone (four on a computer), unloaded off screen, half-size posters, the final cut
+    mounted on Play; posters load a step ahead and stay until the runtime moves; each step shows only its own boards.
+    check.mjs covers phone memory and every step down and up. Verified by the user on the iPhone (Chrome and Safari).
 - **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
   Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
 - **Product ticket to file:** audio `role: music` ducking is documented but not implemented in core audio-mix.ts and
