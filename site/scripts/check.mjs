@@ -4,7 +4,7 @@
 // motion, no poster a near-blank frame, every link with its target or file. The story: with motion, each step comes on
 // screen at its scroll position, only its boards are mounted, and the canvas's players stop once it has scrolled away;
 // under reduced motion every step is a static block (its messages and its result's images loaded). The story's sound
-// button turns the voice-over on and off. The gallery plays at most four boards at once and none under reduced motion. The final cut never starts by itself; its big Play starts it from 0:00 with sound. Then the guide (guide.html) at 360, 768 and 1440 px.
+// button turns the voice-over on and off. The gallery plays at most four boards at once and none under reduced motion. The final cut never starts by itself; its big Play starts it from 0:00 with sound. On iPhone sizes the story fits between the bar and the sheet, the sheet sits on the visible bottom as the toolbar shows and hides (`phoneStory`). Then the guide (guide.html) at 360, 768 and 1440 px.
 // Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,6 +15,9 @@ import { launchChrome } from './chrome.mjs';
 
 const WIDTHS = [360, 768, 1440];
 const HOME_WIDTHS = [...WIDTHS, 2000];
+/** iPhone 12-15 and 15 Pro viewports; the toolbar's shown state is simulated by a shorter viewport. */
+const PHONES = [[390, 844], [393, 852]];
+const TOOLBAR = 84;
 /** A poster whose luminance varies less than this (standard deviation, 0-255) is a near-blank frame. */
 export const MIN_POSTER_DEVIATION = 12;
 /** At most this many live runtimes on the canvas at once (a step's boards and the next step's). */
@@ -111,6 +114,22 @@ export async function check({ out } = {}) {
         }
         await page.close();
       }
+    }
+    // The story on a phone (iPhone sizes, at 3x): every step's content between the bar and the sheet, the sheet flush with
+    // the bottom of the visible viewport as the toolbar hides and shows, its text never cut mid-line, the sound switch off
+    // the boards; screenshots of every step, the final cut and the gallery.
+    for (const [width, height] of PHONES) {
+      const tag = `phone ${width}x${height}`;
+      const page = await chrome.newPage();
+      await page.send('Runtime.enable'); await page.send('Page.enable');
+      await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 3, mobile: true });
+      await page.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+      await page.goto(`${server.url}?debug`);
+      await wait(page, 2500);
+      const problems = await phoneStory(page, { width, height, out: width === 390 && out ? out : null });
+      console.log(`${tag}: ${problems.length ? problems.length + ' problem(s)' : 'ok'}`);
+      failures.push(...problems.map((p) => `${tag}: ${p}`));
+      await page.close();
     }
     // The guide: no sideways scroll, every screenshot loads (after scrolling past the lazy ones), every in-page link has its
     // target, and the contents are collapsed below 1000 px and open from there.
@@ -328,6 +347,85 @@ export async function storyFromAnywhere(page, server) {
     if (label !== 'reloaded mid-story' && y < 1000) problems.push(`${label}: the page opened at ${y}, not scrolled down`);
     await walk(`${label}, up`, label === 'reloaded mid-story' ? [6, 5, 4, 3, 2, 1] : up);
     await walk(`${label}, down`, down);
+  }
+  return problems;
+}
+
+/**
+ * The live story on a phone, step by step (at rest on each step, then with the toolbar shown and hidden again): the sheet's
+ * bottom is the visible viewport's; every board, panel and dialog the step shows lies between the bar and the sheet; the
+ * sheet clips nothing, and its clamped text ends on a whole line; the sound switch is in the bar, over no board. With
+ * `out`, a screenshot of each step (iphone-step-NN.png), of the final cut and of the gallery.
+ */
+export async function phoneStory(page, { width, height, out }) {
+  const problems = [];
+  const toStep = (n) => page.eval(`(() => { const s = document.querySelector('.story'); scrollTo({ top: s.offsetTop + (s.offsetHeight - innerHeight) * (${n - 0.45} / 11.6), behavior: 'instant' }); })()`);
+  const shot = async (name) => { const { data } = await page.send('Page.captureScreenshot', { format: 'png' }); writeFileSync(join(out, name), Buffer.from(data, 'base64')); };
+  const measure = () => page.eval(`(() => {
+    const out = [];
+    const vv = visualViewport;
+    const sheet = document.querySelector('.chat').getBoundingClientRect();
+    const bar = document.querySelector('.topbar').getBoundingClientRect();
+    if (Math.abs(sheet.bottom - (vv.offsetTop + vv.height)) > 1) out.push('the sheet ends at ' + Math.round(sheet.bottom) + ', the visible viewport at ' + Math.round(vv.offsetTop + vv.height));
+    const shown = (el) => { for (let e = el; e && e !== document.body; e = e.parentElement) { const cs = getComputedStyle(e); if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.5) return false; const f = /opacity\\(([\\d.]+)\\)/.exec(e.style.filter); if (f && Number(f[1]) < 0.5) return false; } return el.getClientRects().length > 0; };
+    // What the step shows: on screen (a board scrolled right off the canvas is not part of it), not faded out.
+    const content = [...document.querySelectorAll('.world > .board, .world > .panel, [data-stage] .export')].filter(shown)
+      .filter((el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; });
+    const boxes = [];
+    for (const el of content) {
+      const r = el.getBoundingClientRect();
+      const label = el.querySelector(':scope > .board__label');
+      const top = label && shown(label) ? Math.min(r.top, label.getBoundingClientRect().top) : r.top;
+      const name = el.dataset.board ?? el.className.split(' ').slice(-1)[0];
+      boxes.push(r);
+      if (top < bar.bottom - 1 || r.bottom > sheet.top + 1 || r.left < -1 || r.right > innerWidth + 1) out.push(name + ' is cut (' + [r.left, top, r.right, r.bottom].map(Math.round).join(', ') + '; room ' + Math.round(bar.bottom) + '-' + Math.round(sheet.top) + ')');
+    }
+    for (const el of [document.querySelector('.chat'), document.querySelector('.chat__log')]) if (el.scrollHeight > el.clientHeight + 1) out.push('the sheet clips its content (' + el.className + ': ' + el.scrollHeight + ' > ' + el.clientHeight + ')');
+    // A clamped text (its content taller than its box) shows whole lines only, with no padding under them for the next
+    // line to peek into.
+    for (const el of document.querySelectorAll('.chat .ex.is-current .msg, .chat .ex.is-current .msg *')) {
+      if (!shown(el) || el.scrollHeight <= el.clientHeight + 1) continue;
+      const cs = getComputedStyle(el); const lh = parseFloat(cs.lineHeight); const inner = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      const lines = inner / lh;
+      if (Math.abs(lines - Math.round(lines)) > 0.05 || parseFloat(cs.paddingBottom) > 0) out.push('the sheet cuts a line of "' + el.textContent.slice(0, 30) + '…"');
+    }
+    const snd = document.querySelector('.story__sound');
+    if (!snd.closest('.topbar')) out.push('the sound switch is not in the bar');
+    const s = snd.getBoundingClientRect();
+    if (!s.width) out.push('the sound switch is not shown');
+    for (const r of boxes) if (s.left < r.right && s.right > r.left && s.top < r.bottom && s.bottom > r.top) out.push('the sound switch covers a board');
+    for (const sel of ['.topbar__brand', '.topbar__get']) { const r = document.querySelector(sel)?.getBoundingClientRect(); if (!r?.width || (s.left < r.right && s.right > r.left)) out.push('the sound switch and ' + sel + ' overlap, or ' + sel + ' is missing'); }
+    if (getComputedStyle(document.querySelector('.topbar__download')).display !== 'none') out.push('the bar still offers the macOS download');
+    if (document.documentElement.scrollWidth > innerWidth) out.push('horizontal scroll');
+    return out;
+  })()`);
+  const metrics = (h) => page.send('Emulation.setDeviceMetricsOverride', { width, height: h, deviceScaleFactor: 3, mobile: true });
+  // At rest on each step, and again late in it (step 11: once the export dialog has closed on the whole canvas).
+  const stops = [...Array.from({ length: 11 }, (_, i) => i + 1), 11.4];
+  for (const n of stops) {
+    await toStep(n);
+    await wait(page, 1500);
+    for (const p of await measure()) problems.push(`step ${n}: ${p}`);
+    if (out && Number.isInteger(n)) await shot(`iphone-step-${String(n).padStart(2, '0')}.png`);
+  }
+  // The toolbar shows (a shorter visible viewport), then hides again: the sheet follows the bottom each time. (Emulation
+  // shrinks svh with the viewport, and the story's length with it: the step is found again at each height; on a phone svh
+  // stays put.)
+  for (const n of [4, 11]) {
+    for (const h of [height - TOOLBAR, height]) {
+      await metrics(h);
+      await toStep(n);
+      await wait(page, 1200);
+      for (const p of await measure()) problems.push(`step ${n} at ${h} px: ${p}`);
+    }
+  }
+  if (out) {
+    await page.eval(`scrollTo({ top: document.querySelector('#final-cut').offsetTop - 60, behavior: 'instant' })`);
+    await wait(page, 2500);
+    await shot('iphone-final.png');
+    await page.eval(`scrollTo({ top: document.querySelector('.gallery').offsetTop - 60, behavior: 'instant' })`);
+    await wait(page, 3000);
+    await shot('iphone-gallery.png');
   }
   return problems;
 }
