@@ -4,7 +4,7 @@
 // motion, no poster a near-blank frame, every link with its target or file. The story: with motion, each step comes on
 // screen at its scroll position, only its boards are mounted, and the canvas's players stop once it has scrolled away;
 // under reduced motion every step is a static block (its messages and its result's images loaded). The story's sound
-// button turns the voice-over on and off. The gallery plays at most four boards at once and none under reduced motion. The final cut never starts by itself; its big Play starts it from 0:00 with sound. On iPhone sizes the story fits between the bar and the sheet, the sheet sits on the visible bottom as the toolbar shows and hides (`phoneStory`). Then the guide (guide.html) at 360, 768 and 1440 px.
+// button turns the voice-over on and off. The gallery plays at most four boards at once and none under reduced motion. The final cut never starts by itself; its big Play starts it from 0:00 with sound. On iPhone sizes the story fits between the bar and the sheet, the sheet sits on the visible bottom as the toolbar shows and hides (`phoneStory`), and memory comes back after scrolling the whole page twice with at most two live runtimes (`phoneMemory`). Then the guide (guide.html) at 360, 768 and 1440 px.
 // Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,8 +20,6 @@ const PHONES = [[390, 844], [393, 852]];
 const TOOLBAR = 84;
 /** A poster whose luminance varies less than this (standard deviation, 0-255) is a near-blank frame. */
 export const MIN_POSTER_DEVIATION = 12;
-/** At most this many live runtimes on the canvas at once (a step's boards and the next step's). */
-const MAX_STAGE_FRAMES = 9;
 const wait = (page, ms) => page.eval(`new Promise(r => setTimeout(r, ${ms}))`);
 
 export async function check({ out } = {}) {
@@ -127,6 +125,7 @@ export async function check({ out } = {}) {
       await page.goto(`${server.url}?debug`);
       await wait(page, 2500);
       const problems = await phoneStory(page, { width, height, out: width === 390 && out ? out : null });
+      problems.push(...await phoneMemory(page, tag));
       console.log(`${tag}: ${problems.length ? problems.length + ' problem(s)' : 'ok'}`);
       failures.push(...problems.map((p) => `${tag}: ${p}`));
       await page.close();
@@ -184,7 +183,7 @@ export async function check({ out } = {}) {
 
 /**
  * The live story, step by step: scrolled to the middle of each step, the story says it is on that step, every board it plays
- * has a runtime mounted, and no more than MAX_STAGE_FRAMES runtimes are on the canvas. With the sound turned on (a real
+ * has a runtime mounted (unless the page's budget of live runtimes is full), and the page never holds more runtimes than its budget. With the sound turned on (a real
  * click on the story's button), step 6 says its line and step 9 lets its board speak; turned off, everything is silent.
  */
 async function liveStory(page) {
@@ -202,13 +201,15 @@ async function liveStory(page) {
       const stage = window.__siteDebug.players.filter((p) => p.figure.closest('[data-stage]'));
       return {
         step: window.__siteDebug.story?.step,
-        frames: document.querySelectorAll('[data-stage] iframe').length,
+        frames: document.querySelectorAll('iframe').length, limit: window.__siteDebug.budget.limit,
         unmounted: stage.filter((p) => p.state.visible && !p.frame && !p.failed).map((p) => p.id),
+        // The page's budget of live runtimes: past it a board waits on its poster.
+        full: window.__siteDebug.budget.live.size >= window.__siteDebug.budget.limit,
       };
     })()`);
     if (r.step !== n) problems.push(`scrolled to step ${n}, the story shows step ${r.step}`);
-    if (r.frames > MAX_STAGE_FRAMES) problems.push(`step ${n}: ${r.frames} runtimes on the canvas`);
-    if (r.unmounted.length) problems.push(`step ${n}: boards to play with no runtime: ${r.unmounted.join(', ')}`);
+    if (r.frames > r.limit) problems.push(`step ${n}: ${r.frames} runtimes on the page, over its budget of ${r.limit}`);
+    if (r.unmounted.length && !r.full) problems.push(`step ${n}: boards to play with no runtime: ${r.unmounted.join(', ')}`);
   }
   await scrollToStep(6);
   await wait(page, 1200);
@@ -299,13 +300,14 @@ async function finalCutStart(page) {
   await wait(page, 5000);
   const state = () => page.eval(`(() => { const p = window.__siteDebug.players.find((x) => x.figure.hasAttribute('data-final-cut'));
     const b = document.querySelector('.final__start').getBoundingClientRect();
-    return { playing: p.playing, started: p.started, ready: p.ready, time: p.time, muted: p.muted, sound: window.__siteDebug.sound.on, at: [b.left + b.width / 2, b.top + b.height / 2], shown: b.width > 0 }; })()`);
+    return { mounted: Boolean(p.frame), playing: p.playing, started: p.started, ready: p.ready, time: p.time, muted: p.muted, sound: window.__siteDebug.sound.on, at: [b.left + b.width / 2, b.top + b.height / 2], shown: b.width > 0 }; })()`);
   let s = await state();
+  if (s.mounted) problems.push('the final cut has a runtime before its Play');
   if (s.playing || s.started) problems.push(`the final cut started by itself (at ${s.time.toFixed(1)} s)`);
   if (!s.shown) problems.push('the final cut has no big Play');
   for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: s.at[0], y: s.at[1], button: 'left', clickCount: 1 });
-  await wait(page, 1500);
-  s = await state();
+  // Its runtime is mounted only now (none waits behind the poster): a little time to load.
+  for (let i = 0; i < 40; i++) { await wait(page, 500); s = await state(); if (s.playing) break; }
   if (!s.playing || s.time > 3 || s.muted || !s.sound) problems.push(`after Play: ${JSON.stringify({ playing: s.playing, time: s.time, muted: s.muted, sound: s.sound })}, not playing from 0:00 with sound`);
   await page.eval(`(() => { const p = window.__siteDebug.players.find((x) => x.figure.hasAttribute('data-final-cut')); p.update({ intent: 'pause' }); window.__siteDebug.sound.set(false); })()`);
   return problems;
@@ -427,6 +429,47 @@ export async function phoneStory(page, { width, height, out }) {
     await wait(page, 3000);
     await shot('iphone-gallery.png');
   }
+  return problems;
+}
+
+/**
+ * Memory on a phone: the whole page scrolled down and up twice. At no point more live runtimes than the phone's budget;
+ * back at the top after the second pass, the JS heap, the DOM nodes and the documents (each runtime and each of its html
+ * layers is one) are within a small margin of the first pass: nothing visited is kept.
+ */
+export async function phoneMemory(page, tag) {
+  const problems = [];
+  await page.send('Performance.enable');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const settle = async () => {
+    await page.eval(`scrollTo({ top: 0, behavior: 'instant' })`);
+    await sleep(3000);
+    await page.send('HeapProfiler.collectGarbage');
+    await sleep(500);
+    const { metrics } = await page.send('Performance.getMetrics');
+    const m = Object.fromEntries(metrics.map((x) => [x.name, x.value]));
+    return { heap: m.JSHeapUsedSize, nodes: m.Nodes, docs: m.Documents };
+  };
+  const limit = await page.eval('window.__siteDebug.budget.limit');
+  let most = 0;
+  const passes = [];
+  for (let pass = 0; pass < 2; pass++) {
+    const h = await page.eval('document.documentElement.scrollHeight');
+    const ys = []; for (let y = 0; y <= h; y += 450) ys.push(y);
+    for (const y of [...ys, ...ys.reverse()]) {
+      await page.eval(`scrollTo({ top: ${y}, behavior: 'instant' })`);
+      await sleep(320);
+      most = Math.max(most, await page.eval(`document.querySelectorAll('iframe').length`));
+    }
+    passes.push(await settle());
+  }
+  const [a, b] = passes;
+  const mb = (v) => (v / 1048576).toFixed(1);
+  console.log(`${tag} memory: at most ${most} live runtimes (budget ${limit}); at the top after pass 1 / 2: heap ${mb(a.heap)} / ${mb(b.heap)} MB, nodes ${a.nodes} / ${b.nodes}, documents ${a.docs} / ${b.docs}`);
+  if (most > limit) problems.push(`${most} live runtimes at once, over the phone's budget of ${limit}`);
+  if (b.heap > a.heap * 1.15 + 1048576) problems.push(`the JS heap grew from ${mb(a.heap)} to ${mb(b.heap)} MB between two passes`);
+  if (b.nodes > a.nodes * 1.1 + 50) problems.push(`DOM nodes grew from ${a.nodes} to ${b.nodes} between two passes`);
+  if (b.docs > a.docs + 4) problems.push(`documents grew from ${a.docs} to ${b.docs} between two passes`);
   return problems;
 }
 
