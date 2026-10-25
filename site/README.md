@@ -37,6 +37,12 @@ next request typed and sent), and the boards' players are driven by step (only t
 final cut (`figure[data-final-cut]`, `data-autoplay="false"`) is a composition player with controls (`js/final-cut.js`): it never
 starts by itself; its big Play starts it from 0:00 with the sound on.
 
+Live runtimes are costly (each is a page, and each of its html layers a frame; on iOS they all share one content process):
+the page holds at most two at once on a phone (a touch screen or under 960 px) and four on a computer (`LIVE_BUDGET` in
+`js/player.js`). A player past the budget waits on its poster; one that leaves the screen's surroundings is unloaded
+(`about:blank`, then removed), never kept paused. The final cut has no runtime until its Play. Each composition has a
+half-size poster (`poster-half.webp`, written by `scripts/posters.mjs`, `--half` to redo only those) that phones load.
+
 Sound (`js/sound.js`) is off until the viewer asks for it: one switch for the page, turned on by the story's "Sound on"
 button or by Play on the final cut (unless the viewer switched it off). With the sound on, each step says its voice-over
 line once the scroll rests on it (`data-voice` on the `.step`: the film's line of that beat); the subtitles step lets its
