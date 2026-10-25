@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { decide, isVisible } from '../src/js/player-logic.js';
-import { CompositionPlayer, READY_TIMEOUT_MS } from '../src/js/player.js';
+import { CompositionPlayer, READY_TIMEOUT_MS, liveBudget, LIVE_BUDGET } from '../src/js/player.js';
 
 const S = (o) => ({ visible: false, near: false, reducedMotion: false, ready: false, failed: false, ...o });
 
@@ -334,18 +334,68 @@ test('silent by default; setMuted reaches a live runtime, and a runtime mounted 
   assert.deepEqual(later.sent[1].m, { type: 'mute', muted: false });
 });
 
-test('data-autoplay="false": on screen it holds its poster frame, and the viewer\'s first play starts it from 0:00', () => {
+test('data-autoplay="false": no runtime until the viewer\'s Play (it never starts by itself), then it starts from 0:00', () => {
   const h = harness({ posterTime: 30, loop: 'false', autoplay: 'false' });
   h.player.update(S({ near: true, visible: true }));
-  h.msg({ type: 'ready', duration: 60 });
-  assert.equal(h.player.playing, false);
-  assert.ok(!h.types().includes('play'), 'never starts by itself');
+  assert.equal(h.mounts(), 0, 'on screen it is its poster, with no runtime behind it');
   h.player.update(S({ near: true, visible: false })); h.player.update(S({ near: true, visible: true }));
-  assert.ok(!h.types().includes('play'), 'nor when it scrolls back on screen');
+  assert.equal(h.mounts(), 0, 'nor when it scrolls back on screen');
   h.player.update({ intent: 'play' });
+  assert.equal(h.mounts(), 1, 'Play mounts it');
+  h.msg({ type: 'ready', duration: 60 });
   assert.equal(h.player.playing, true);
   assert.deepEqual(h.sent.slice(-2).map((x) => x.m), [{ type: 'seek', t: 0 }, { type: 'play', loop: false }]);
   h.player.update({ intent: 'pause' }); h.player.update({ intent: 'play' });
   assert.deepEqual(h.sent.at(-1).m, { type: 'play', loop: false });
   assert.notDeepEqual(h.sent.at(-2).m, { type: 'seek', t: 0 }, 'a later play resumes where it paused');
+});
+
+/** Players sharing one live budget, each on its own fake frame. */
+function budgetHarness(limit, n) {
+  const budget = liveBudget(() => limit);
+  const frames = [];
+  const players = Array.from({ length: n }, (_, i) => new CompositionPlayer(
+    { dataset: { composition: `c${i}` }, classList: { add() {}, remove() {} } },
+    {
+      origin: ORIGIN, budget,
+      mount: (src) => { const f = { src, contentWindow: { postMessage() {} }, removed: false, remove() { this.removed = true; } }; frames.push(f); return f; },
+      setTimeout: () => 0, clearTimeout: () => {},
+    },
+  ));
+  const live = () => players.filter((p) => p.frame).map((p) => p.id);
+  return { budget, players, frames, live };
+}
+
+test('a page-wide budget of live runtimes: past it a player waits on its poster, and mounts when a slot frees', () => {
+  const { players: [a, b, c], live } = budgetHarness(2, 3);
+  for (const p of [a, b, c]) p.update(S({ near: true, visible: true }));
+  assert.deepEqual(live(), ['c0', 'c1']);
+  a.update({ near: false, visible: false });
+  assert.deepEqual(live(), ['c1', 'c2'], 'the waiting one takes the freed slot');
+});
+
+test('a player on screen takes the slot of one only kept near (mounted ahead), never of one on screen', () => {
+  const { players: [a, b, c], live } = budgetHarness(2, 3);
+  a.update(S({ near: true })); b.update(S({ near: true, visible: true }));
+  c.update(S({ near: true, visible: true }));
+  assert.deepEqual(live(), ['c1', 'c2'], 'c took a\'s slot: a was only near');
+  a.update({ visible: true });
+  assert.deepEqual(live(), ['c1', 'c2'], 'a, now on screen too, waits: nobody below it to evict');
+  // A higher priority wins between two on screen (the story's board in its framing).
+  a.update({ priority: 5 });
+  assert.equal(live().length, 2);
+  assert.ok(live().includes('c0'));
+});
+
+test('an unloaded runtime lets go of its page: about:blank, then removed', () => {
+  const { players: [a], frames } = budgetHarness(2, 1);
+  a.update(S({ near: true, visible: true }));
+  a.update(S({}));
+  assert.equal(frames[0].src, 'about:blank');
+  assert.equal(frames[0].removed, true);
+  assert.equal(a.frame, null);
+});
+
+test('two live runtimes on a phone, four on a wide screen', () => {
+  assert.deepEqual(LIVE_BUDGET, { phone: 2, desktop: 4 });
 });

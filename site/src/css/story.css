@@ -109,7 +109,8 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
 .js-motion .step__result { display: none; }
 
 [data-stage] [hidden] { display: none !important; }
-.world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; will-change: transform; --inv: 1; }
+/* No will-change: the world spans every board, and a layer that size is kept for good (memory on a phone). */
+.world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; --inv: 1; }
 .board, .panel { --X: var(--x); --Y: var(--y); --W: var(--w); --H: var(--h); position: absolute; left: calc(var(--X) * 1px); top: calc(var(--Y) * 1px); width: calc(var(--W) * 1px); height: calc(var(--H) * 1px); }
 /* Narrow screens lay the world out in a column (a portrait canvas): boards and panels with a phone place use it. */
 @media (max-width: 959px) { .board, .panel { --X: var(--px, var(--x)); --Y: var(--py, var(--y)); --W: var(--pw, var(--w)); --H: var(--ph, var(--h)); } }

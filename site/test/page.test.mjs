@@ -95,6 +95,17 @@ test('every composition figure has a poster with alt and size, of a composition 
   }
 });
 
+test('every poster offers its half-size file, which a phone takes; a wide screen keeps the full one', () => {
+  const imgs = [...html.matchAll(/<img class="poster"[^>]*>/g)].map((m) => m[0]);
+  assert.ok(imgs.length > 20);
+  for (const img of imgs) {
+    const id = /compositions\/([\w-]+)\/poster\.webp/.exec(img)[1];
+    const w = Number(attr(img, 'width'));
+    assert.equal(attr(img, 'srcset'), `compositions/${id}/poster-half.webp ${Math.round(w / 2)}w, compositions/${id}/poster.webp ${w}w`, id);
+    assert.equal(attr(img, 'sizes'), '(max-width: 959px) 320px, 100vw', id);
+  }
+});
+
 test('the story\'s boards loop from a time inside their composition, past the typed brief', () => {
   const tags = [...stage.matchAll(/<figure\b[^>]*>/g)].map((m) => m[0]).filter((t) => attr(t, 'data-composition').startsWith('story-'));
   assert.ok(tags.length >= 12);

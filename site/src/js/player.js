@@ -7,6 +7,62 @@ import { decide, isVisible, VISIBLE_RATIO } from './player-logic.js';
 // first composition (runtime, preview.js and fonts) took over 8 s on a slow machine.
 export const READY_TIMEOUT_MS = 20000;
 
+/**
+ * At most this many live runtimes on the whole page at once. Each runtime is a page with its fonts, its frames (an html
+ * layer is a frame of its own: the final cut holds dozens) and its canvases; on a phone they all share the browser's one
+ * content process, and past a few of them iOS kills the tab.
+ */
+export const LIVE_BUDGET = { phone: 2, desktop: 4 };
+
+/**
+ * The page's budget of live runtimes, shared by every player: a player that wants a runtime gets a slot, or takes the slot
+ * of a lower-ranked one (on screen beats only near, the viewer's Play beats both, then `state.priority`), or waits on its
+ * poster until one frees.
+ * @param {() => number} limit the budget now (it follows the screen)
+ */
+export function liveBudget(limit) {
+  const live = new Set();
+  const waiting = new Set();
+  const rank = (p) => (p.state.intent === 'play' ? 1000 : 0) + (p.state.visible ? 100 : 0) + (p.state.priority ?? 0);
+  let settling = false;
+  const budget = {
+    live, waiting,
+    get limit() { return limit(); },
+    /** @returns {boolean} whether `p` may mount now */
+    acquire(p) {
+      waiting.delete(p);
+      if (live.has(p)) return true;
+      if (live.size >= limit()) {
+        const lowest = [...live].sort((x, y) => rank(x) - rank(y))[0];
+        if (!lowest || rank(lowest) >= rank(p)) { waiting.add(p); return false; }
+        settling = true;
+        lowest.unmount();
+        waiting.add(lowest);
+        settling = false;
+      }
+      live.add(p);
+      return true;
+    },
+    release(p) {
+      live.delete(p);
+      if (settling) return;
+      budget.refresh();
+    },
+    /** Waiting players take the free slots, if any. */
+    refresh() {
+      // The best-ranked waiting players take the freed slots (each asks again through its own update).
+      for (const w of [...waiting].sort((x, y) => rank(y) - rank(x))) {
+        if (live.size >= limit()) break;
+        waiting.delete(w);
+        w.update({});
+      }
+    },
+    /** `p` no longer wants a runtime (left the screen's surroundings). */
+    forget(p) { waiting.delete(p); },
+  };
+  return budget;
+}
+
 export class CompositionPlayer {
   /**
    * @param {{ dataset: { composition: string, posterTime?: string, replay?: string, loopFrom?: string }, classList: { add(c: string): void, remove(c: string): void } }} figure
@@ -71,8 +127,11 @@ export class CompositionPlayer {
   update(state) {
     this.state = { ...this.state, ...state };
     if (this.failed === 'timeout' && !this.state.near) this.clearFailure();
+    // A film that waits for the viewer's Play (the final cut) has no runtime until then: its poster is all it shows.
     const waiting = this.manualStart && !this.started && this.state.intent !== 'play';
-    const action = decide({ ...this.state, still: this.state.still || waiting, ready: this.ready, failed: this.failed !== null });
+    const near = this.state.near && !waiting;
+    if (!near) this.deps.budget?.forget(this);
+    const action = decide({ ...this.state, near, ready: this.ready, failed: this.failed !== null });
     if (action === 'mount' && !this.frame) this.mount();
     else if (action === 'unmount' || (action === 'unmounted' && this.frame)) this.unmount();
     else if (action === 'play') this.play();
@@ -81,6 +140,7 @@ export class CompositionPlayer {
   }
 
   mount() {
+    if (this.deps.budget && !this.deps.budget.acquire(this)) return;
     this.frame = this.deps.mount(this.src, this);
     this.timer = this.deps.setTimeout(() => this.fail('timeout'), READY_TIMEOUT_MS);
   }
@@ -165,9 +225,7 @@ export class CompositionPlayer {
     if (this.failed) return;
     this.failed = why;
     this.figure.dataset.fail = why;
-    this.deps.clearTimeout(this.timer);
-    this.frame?.remove();
-    this.frame = null;
+    this.destroy();
     this.figure.classList.remove('is-ready');
     this.figure.classList.add('is-failed');
   }
@@ -221,10 +279,16 @@ export class CompositionPlayer {
     }
   }
 
+  /** Lets go of the runtime: its page unloaded first (about:blank), then its frame removed, then its slot freed. */
   destroy() {
     this.deps.clearTimeout(this.timer);
-    this.frame?.remove();
+    const frame = this.frame;
     this.frame = null;
+    if (frame) {
+      frame.src = 'about:blank';
+      frame.remove();
+      this.deps.budget?.release(this);
+    }
   }
 }
 
@@ -239,8 +303,13 @@ export function mountPlayers(doc, { log, manual = () => false } = {}) {
   const win = doc.defaultView;
   const motion = win.matchMedia('(prefers-reduced-motion: reduce)');
   const players = new Map();
+  // A phone (a touch screen or a narrow window) holds fewer live runtimes than a computer.
+  const phone = win.matchMedia('(pointer: coarse), (max-width: 959px)');
+  const budget = liveBudget(() => (phone.matches ? LIVE_BUDGET.phone : LIVE_BUDGET.desktop));
+  phone.addEventListener?.('change', () => budget.refresh());
   const deps = {
     origin: win.location.origin,
+    budget,
     log,
     setTimeout: (fn, ms) => win.setTimeout(fn, ms),
     clearTimeout: (id) => win.clearTimeout(id),
@@ -266,5 +335,7 @@ export function mountPlayers(doc, { log, manual = () => false } = {}) {
   }, { threshold: [0, VISIBLE_RATIO] });
   for (const figure of players.keys()) if (!manual(figure)) { near.observe(figure); visible.observe(figure); }
   motion.addEventListener('change', () => { for (const p of players.values()) p.update({ reducedMotion: motion.matches }); });
-  return [...players.values()];
+  const list = [...players.values()];
+  list.budget = budget;
+  return list;
 }

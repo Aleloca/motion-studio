@@ -45,4 +45,4 @@ if (live) {
 } else {
   root.classList.remove('js-motion');
 }
-if (debug) window.__siteDebug = { commands, players, sound, gallery };
+if (debug) window.__siteDebug = { commands, players, sound, gallery, budget: players.budget };

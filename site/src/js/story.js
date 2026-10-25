@@ -287,8 +287,16 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   /* ---------------------------------------------------------------- steps: chat, caption, players */
   const stagePlayers = players.filter((p) => stage.contains(p.figure));
   let onScreen = true;
+  // On a phone only the boards in the step's framing play (the others are faded out): the page's budget of live runtimes is
+  // two there. Between the step's boards the newest change wins a slot (`priority`, its place in LIVE).
+  const inFraming = (id) => {
+    if (!size.narrow) return true;
+    const b = boxOf(board(id));
+    return focusOf([b.x, b.y, b.w, b.h], NARROW[FRAMES[step]]) >= 0.5;
+  };
   const syncPlayers = () => {
-    const live = new Set(LIVE[step] ?? []);
+    const order = LIVE[step] ?? [];
+    const live = new Set(order.filter(inFraming));
     const next = new Set(size.narrow ? [] : LIVE[step + 1] ?? []);
     for (const p of stagePlayers) {
       const f = p.figure;
@@ -297,7 +305,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
       const plays = onScreen && live.has(id) && (!own || inSteps(own, step));
       const soon = onScreen && next.has(id) && (!own || inSteps(own, step + 1));
       const still = f.dataset.still ? inSteps(parseSteps(f.dataset.still), step) : false;
-      p.update({ near: plays || soon, visible: plays, still });
+      p.update({ near: plays || soon, visible: plays, still, priority: order.indexOf(id) + 1 });
     }
   };
   // The players follow once the step settles: a fast scroll (or the jump to the final cut) passes steps without
@@ -333,9 +341,11 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   let voiceTimer = null;
   let fadeRaf = 0;
   const voiceTile = board('genvoice'); const musicTile = board('genmusic');
+  // A sound that stops lets go of its media (a paused element keeps its decoded audio until it is collected).
+  const release = (a) => { a.pause(); a.removeAttribute('src'); a.load(); };
   const stopLine = () => {
     cancelAnimationFrame(fadeRaf);
-    if (line) { line.pause(); line = null; }
+    if (line) { release(line); line = null; }
     for (const t of [voiceTile, musicTile]) t.classList.remove('is-playing');
   };
   /**
@@ -345,7 +355,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   function playClip(src, { tile = null, seconds = 0, then = null } = {}) {
     const a = new Audio(src);
     line = a;
-    const done = () => { cancelAnimationFrame(fadeRaf); tile?.classList.remove('is-playing'); if (line === a) { line = null; then?.(); } };
+    const done = () => { cancelAnimationFrame(fadeRaf); tile?.classList.remove('is-playing'); release(a); if (line === a) { line = null; then?.(); } };
     if (tile) {
       a.addEventListener('playing', () => tile.classList.add('is-playing'));
       a.addEventListener('timeupdate', () => tile.style.setProperty('--p', String(clamp(a.currentTime / (seconds || a.duration || 1), 0, 1))));
