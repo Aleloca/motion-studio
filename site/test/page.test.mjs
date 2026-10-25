@@ -44,6 +44,14 @@ test('the first viewport offers the download of the latest release and the final
   assert.ok(html.includes(`class="btn btn--small topbar__download" href="${LATEST}"`), 'the bar\'s Download');
 });
 
+test('on a phone the bar offers Get it (to Get started, where the macOS download is) and the sound switch, not the macOS download', () => {
+  assert.match(html, /<a class="btn btn--small topbar__get" href="#install">Get it<\/a>/);
+  assert.ok(section('install').includes(LATEST), 'Get started links the latest release');
+  const css = readFileSync(join(SITE, 'src', 'css', 'story.css'), 'utf8');
+  assert.match(css, /@media \(max-width: 720px\) \{[^}]*\.topbar__download \{ display: none; \}/);
+  assert.match(css, /\.topbar__get \{ display: none;/);
+});
+
 test('eleven steps in order, each a static block: a title, what it shows, the exchange and the result', () => {
   const names = ['Brief', 'Choose', 'Ask', 'Edit by hand', 'Brand', 'Generate', 'Formats', 'Languages', 'Subtitles', 'Identity', 'Export'];
   assert.equal(steps.length, 11);

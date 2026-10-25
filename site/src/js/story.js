@@ -5,7 +5,7 @@
 // players are driven here by step (only the boards of the step on screen play), never by their own observers. With the
 // sound on, each step says its voice-over line once it settles (the subtitles step lets its board speak, in sync with
 // the subtitles it draws).
-import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover } from './story-logic.js';
+import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover, visibleHeight, fitScale, focusOf } from './story-logic.js';
 import { soundButton } from './sound.js';
 
 export const STEPS = 11;
@@ -49,6 +49,13 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   const $$ = (sel, root = stage) => [...root.querySelectorAll(sel)];
   const board = (id) => $(`[data-board="${id}"]`);
 
+  // The pinned canvas is as tall as the visible viewport: on a phone it follows the browser's toolbars as they show and hide.
+  const root = document.documentElement;
+  const followViewport = () => { const h = visibleHeight(window.visualViewport); if (h) root.style.setProperty('--vvh', `${h}px`); };
+  followViewport();
+  window.visualViewport?.addEventListener('resize', followViewport);
+  addEventListener('resize', followViewport);
+
   const steps = [...story.querySelectorAll('.step')].map(readStep);
   const chat = buildChat(steps, story.querySelector('.story__note')?.textContent ?? '');
   pin.append(chat.el);
@@ -65,8 +72,16 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
       // The bottom sheet covers the canvas: frame above it, as tall as it is now (it grows with the step's exchange).
       sheet: narrow ? sheetCover({ stageBottom: r.bottom, sheetTop: chat.el.getBoundingClientRect().top, open: chat.el.classList.contains('is-open'), previous: size.sheet }) : 0,
     };
+    // The canvas ends at the sheet; a dialog over it (the export) fits the room between the bar and the sheet.
+    stage.style.setProperty('--sheet', `${size.sheet}px`);
+    fitDialog();
+    placed = $$('.world > .board, .world > .panel').map((el) => { const b = boxOf(el); return [el, [b.x, b.y, b.w, b.h]]; });
   };
+  let placed = [];
+  const fitDialog = () => stage.style.setProperty('--fit', String(size.narrow ? fitScale(exportBox.offsetHeight, size.h - size.sheet - 24) : 1));
   let scale = 1;
+  /** The framing on screen, in stage pixels (for the site's checks). */
+  let frame = null;
   const applyCamera = () => {
     const table = size.narrow ? NARROW : WIDE;
     const rect = framingAt(FRAMES.map((f) => table[f]), cam.k);
@@ -75,12 +90,18 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     const pad = size.narrow ? { t: 26, r: 16, b: 18, l: 16 } : { t: 44, r: 40, b: lerp(28, 92, clamp(cam.k, 0, 1)), l: 40 };
     const fit = cameraFit(rect, { w: size.w, h: size.h }, { top: top + pad.t, right: pad.r, bottom: size.sheet + pad.b, left: pad.l });
     scale = fit.s;
+    frame = { left: rect[0] * fit.s + fit.tx, top: rect[1] * fit.s + fit.ty, width: rect[2] * fit.s, height: rect[3] * fit.s };
     world.style.transform = `translate(${fit.tx}px, ${fit.ty}px) scale(${fit.s})`;
     world.style.setProperty('--inv', String(1 / fit.s));
     // Labels keep their size down to 80% zoom, then shrink with the canvas (never wider than their board).
     world.style.setProperty('--lab', String(clamp(fit.s, 0.8, 1) / fit.s));
     stage.style.setProperty('--zoom', String(fit.s));
     stage.style.setProperty('--pan', `${fit.tx}px ${fit.ty}px`);
+    // On a phone only the framing's boards show: the rest of the world fades out rather than being cut by the bar or the sheet.
+    for (const [el, box] of placed) {
+      const f = size.narrow ? focusOf(box, rect) : 1;
+      el.style.filter = f < 1 ? `opacity(${f.toFixed(3)})` : '';
+    }
     zoomLabel.textContent = `${Math.round(fit.s * 100)}%`;
   };
   const zoomLabel = $('.toolbar__zoom');
@@ -291,6 +312,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   function setStep(n, before) {
     step = n;
     layOut(n);
+    fitDialog();
     const s = steps[n - 1];
     chat.show(n, before);
     caption.n.textContent = String(n).padStart(2, '0');
@@ -380,7 +402,15 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   }
   if (sound) {
     const btn = story.querySelector('.story__sound');
-    if (btn) { btn.hidden = false; soundButton(btn, sound); }
+    if (btn) {
+      btn.hidden = false;
+      soundButton(btn, sound);
+      // On a phone the switch lives in the bar, where it never covers the canvas; back over the canvas on a wide screen.
+      const home = btn.parentElement; const bar = document.querySelector('.topbar__nav');
+      const place = () => { if (narrowQuery.matches && bar) bar.prepend(btn); else home.append(btn); };
+      place();
+      narrowQuery.addEventListener('change', place);
+    }
     sound.onChange(() => { clearTimeout(voiceTimer); speak(); });
   }
   const lineItems = $$('.lines__list li');
@@ -410,7 +440,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   resized.observe(chat.el);
   narrowQuery.addEventListener('change', () => { onResize(); syncPlayers(); });
   stage.classList.add('is-live');
-  return { timeline: tl, get step() { return step; }, get speaking() { return line ? { src: line.src, paused: line.paused } : null; } };
+  return { timeline: tl, get step() { return step; }, get frame() { return frame; }, get speaking() { return line ? { src: line.src, paused: line.paused } : null; } };
 }
 
 /* ---------------------------------------------------------------- the chat panel, built from the steps */
@@ -441,8 +471,9 @@ function buildChat(steps, note) {
   const exchanges = steps.map((s) => {
     const ex = h('div', { class: 'ex', 'data-step': String(s.n) });
     ex.hidden = true;
-    if (s.you) ex.append(h('p', { class: 'who who--you' }, [h('b', {}, 'You')]), h('p', { class: 'msg msg--you' }, s.you));
-    if (s.event) ex.append(h('p', { class: 'msg msg--event' }, s.event));
+    // The text in its own span: on a phone it is clamped to two lines inside the bubble's padding.
+    if (s.you) ex.append(h('p', { class: 'who who--you' }, [h('b', {}, 'You')]), h('p', { class: 'msg msg--you' }, h('span', { class: 'msg__text' }, s.you)));
+    if (s.event) ex.append(h('p', { class: 'msg msg--event' }, h('span', { class: 'msg__text' }, s.event)));
     if (s.agent) {
       const agent = [h('p', { class: 'who' }, [h('span', { class: 'avatar' }), h('b', {}, 'Agent'), h('span', { class: 'tag' }, 'Summary')]), h('p', { class: 'msg msg--agent' }, s.agent)];
       // A paid call: the approval card the app shows before it, then the answer.
