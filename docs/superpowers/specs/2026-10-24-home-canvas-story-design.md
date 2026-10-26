@@ -67,3 +67,20 @@ no scroll-jacking; the video has controls and a poster.
 ## Left to the builder
 Exact copy, step timings, how each board animates between states, which compositions each board plays, the sticky
 mechanics, the launch video's scene design within the ten steps.
+
+## Revision 2026-10-26: classic sections (user tests)
+User tests showed two failures of the scroll-driven canvas: visitors type into the chat panel (it looks real), and the
+scroll-linked story is either not discovered or scrolled through too fast to read. Decision (user, in chat): keep the
+story — Motion Studio making its own launch video, one capability per step, the finished film at the end — but tell it
+as a classic page of sections.
+- First viewport: headline + Download + the step-1 animation (the brief typing itself, then three variants appearing),
+  playing by itself. The full film stays at the end.
+- Then one section per step, stacked: a title, two lines of copy, and beside it (alternating sides on desktop, stacked
+  on phones) an animation of that step applied to our video. Each animation starts by itself when its section enters
+  the viewport and loops at its own pace, independent of scroll speed; no scroll scrubbing, no pinned/sticky story.
+- The chat is part of each animation (a request bubble, the agent's short answer), styled as an illustration, never as
+  an input; no fixed chat panel and no phone bottom sheet.
+- Sound: the Generate and Subtitles sections get an explicit play-with-sound control; nothing plays audio by itself.
+- Kept: the final cut (plays only on Play, with sound), Get started, the gallery, the footer, the phone memory budget
+  (at most two live runtimes on a phone, four on a computer, unloaded off screen, posters first), reduced motion and
+  no-JS fallbacks (posters + copy).
