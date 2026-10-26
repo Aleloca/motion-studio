@@ -57,7 +57,8 @@ test('fonts are local', () => {
 
 test('one primary action: every primary button is the download of the latest release', () => {
   const primaries = [...read('index.html').matchAll(/<a class="[^"]*\bbtn--primary\b[^"]*" href="([^"]+)"/g)].map((m) => m[1]);
-  assert.ok(primaries.length >= 1 && primaries.length <= 2, `${primaries.length} primary buttons`);
+  // The hero's, the final cut's and Get started's: the same one action.
+  assert.ok(primaries.length >= 1 && primaries.length <= 3, `${primaries.length} primary buttons`);
   for (const href of primaries) assert.equal(href, 'https://github.com/Aleloca/motion-studio/releases/latest');
 });
 

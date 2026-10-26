@@ -401,3 +401,28 @@ test('an unloaded runtime lets go of its page: about:blank, then removed', () =>
 test('two live runtimes on a phone, four on a wide screen', () => {
   assert.deepEqual(LIVE_BUDGET, { phone: 2, desktop: 4 });
 });
+
+test('a figure\'s data-priority ranks it in the budget from the start: the chosen board wins a phone\'s slot over the others', () => {
+  const h = harness();
+  assert.equal(h.player.state.priority, 0);
+  const figure = { dataset: { composition: 'story-signal-v1', priority: '2' }, classList: { add() {}, remove() {} } };
+  const p = new CompositionPlayer(figure, { origin: ORIGIN, mount: () => ({}), setTimeout: () => 0, clearTimeout: () => {} });
+  assert.equal(p.state.priority, 2);
+});
+
+test('data-loop-from: a looping board jumps back just before its end, so its empty first frame is never drawn', () => {
+  const h = harness({ posterTime: 5, loopFrom: '2.4' });
+  h.player.update(S({ near: true }));
+  h.msg({ type: 'ready', duration: 8, scenes: [] });
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'time', t: 7.5, playing: true });
+  assert.deepEqual(h.types(), ['setScale', 'mute', 'seek', 'play']);
+  h.msg({ type: 'time', t: 7.93, playing: true });
+  assert.deepEqual(h.types(), ['setScale', 'mute', 'seek', 'play', 'seek', 'play']);
+  assert.deepEqual(h.sent[4].m, { type: 'seek', t: 2.4 });
+  // The jump's own report, and the one after it: no second jump.
+  h.msg({ type: 'time', t: 7.97, playing: true });
+  h.msg({ type: 'time', t: 2.45, playing: true });
+  h.msg({ type: 'time', t: 3, playing: true });
+  assert.equal(h.types().length, 6);
+});

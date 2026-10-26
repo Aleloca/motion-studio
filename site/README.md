@@ -26,14 +26,16 @@ Each folder in `compositions/` is a regular Motion Studio composition (`composit
 
 The site's fonts (`src/assets/fonts/`) are copied into every composition's `assets/fonts/` at build time.
 
-The home is a story on the app's canvas (`index.html`, `css/story.css`, `js/story.js`): Motion Studio makes its own launch
-video in eleven steps. Each `.step` of the page holds its exchange (`.msg--you`, `.msg--agent`, `.msg--event`, and
-`.msg--paid` for a paid call's approval card) and the posters of its result: that is the page without JS and under reduced
-motion. With motion, `story.js` builds the chat panel from
-the steps and drives the canvas (`[data-stage]`): a world of boards and panels placed with `--x/--y/--w/--h` (and
-`--px/--py/--pw/--ph` on narrow screens), each shown in its `data-steps`; one GSAP timeline, driven by the scroll (smoothed like a scrub) through `scrollToTime`, moves
-the camera and brings each change in place (each step's scroll: 45% its change, 40% a hold on the finished state, 15% the
-next request typed and sent), and the boards' players are driven by step (only the step's boards play). On a phone the canvas is as tall as the visible viewport (`--vvh`, which follows the browser's toolbars), the chat is a bottom sheet, the camera frames the step between the bar and the sheet and the boards outside its framing fade out; the sound switch and a Get it link sit in the bar. The
+The home tells a story in sections (`index.html`, `css/story.css`, `js/scenes.js`): Motion Studio makes its own launch
+video. The hero (`[data-scene="brief"]`) plays step 1, the brief becoming three variants and one chosen; then one
+`section.step` per step (`data-scene` names it), each with a step label, a title, two lines of copy and its demo: a small
+canvas of the app (`.scene`, its boards and panels placed with `--x/--y/--w/--h` in the scene's own units, `--sw × --sh`,
+and `--px/--py/--pw/--ph` in `--psw × --psh` when the canvas is narrow, by a container query; one unit is `--u`, so the
+text inside scales with it) beside its chat, drawn as an illustration (bubbles, never an input). Each demo is written in its
+finished state: that is the page without JS and under reduced motion. With motion, `scenes.js` gives each demo a GSAP
+timeline that replays its step in a loop at its own pace (a hold on the finished state, then again), playing while the
+demo is on screen and paused otherwise, from its start after it has been off screen entirely; never tied to the scroll. A
+new version wipes in (`data-wipe`) over the poster of the one before (`.board__before`). The
 final cut (`figure[data-final-cut]`, `data-autoplay="false"`) is a composition player with controls (`js/final-cut.js`): it never
 starts by itself; its big Play starts it from 0:00 with the sound on.
 
@@ -43,10 +45,11 @@ the page holds at most two at once on a phone (a touch screen or under 960 px) a
 (`about:blank`, then removed), never kept paused. The final cut has no runtime until its Play. Each composition has a
 half-size poster (`poster-half.webp`, written by `scripts/posters.mjs`, `--half` to redo only those) that phones load.
 
-Sound (`js/sound.js`) is off until the viewer asks for it: one switch for the page, turned on by the story's "Sound on"
-button or by Play on the final cut (unless the viewer switched it off). With the sound on, each step says its voice-over
-line once the scroll rests on it (`data-voice` on the `.step`: the film's line of that beat); the subtitles step lets its
-board speak (`data-voice="board"`), in sync with the subtitles it draws; every player stays muted otherwise.
+Nothing speaks unless the viewer asks (`js/sounds.js`): the Generate and Subtitles demos each have a Play with sound
+button. Generate's plays the voice-over it made, then a taste of its music bed; Subtitles' lets its board speak its line,
+in sync with the subtitles it draws. One sound at a time (the final cut's Play stops a demo's, a demo's pauses the film);
+a demo's sound stops when it leaves the screen, and the demo holds its finished state while it plays. The final cut's own
+sound switch is `js/sound.js`.
 
 The hero creatives (`kova-*`, `tidefall-*`, `fernwise-*`) and the story's boards (`story-*`, `story.mjs`) are generated:
 change `scripts/hero-gen/`, not their JSON.
@@ -162,6 +165,6 @@ image before committing: none may show a path, a name, a key or a token.
 
 ## Third parties
 
-None at runtime. GSAP 3.13.0 (ScrollTrigger, SplitText) is vendored in `src/vendor/gsap/` under its no-charge standard
+None at runtime. GSAP 3.13.0 (and SplitText, unused) is vendored in `src/vendor/gsap/` under its no-charge standard
 licence; the fonts (Bricolage Grotesque, Instrument Sans, JetBrains Mono) are self-hosted under the SIL Open Font
 License, with their licence files; so are Fraunces, Anton and Caveat, used only by the gallery's compositions.

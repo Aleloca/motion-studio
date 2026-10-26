@@ -1,7 +1,9 @@
-// Boot: live compositions everywhere; the story's canvas only when motion is allowed. Without JS, or with reduced motion,
-// every step is already a static block (the CSS default) and the final cut waits on its poster for Play.
+// Boot: live compositions everywhere, the demos replaying their steps when motion is allowed, the two Play with sound
+// controls, the final cut and the gallery. Without JS, or with reduced motion, every demo is drawn in its finished state
+// (the HTML and CSS default) and the final cut waits on its poster for Play.
 import { mountPlayers } from './player.js';
-import { startStory } from './story.js';
+import { startScenes } from './scenes.js';
+import { startSounds } from './sounds.js';
 import { finalCut } from './final-cut.js';
 import { soundSwitch } from './sound.js';
 import { startGallery } from './gallery.js';
@@ -10,39 +12,27 @@ const root = document.documentElement;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const debug = new URLSearchParams(location.search).has('debug');
 const commands = [];
-const live = !reducedMotion && Boolean(window.gsap && window.ScrollTrigger);
-const inStage = (figure) => Boolean(figure.closest('[data-stage]'));
-const inGallery = (figure) => figure.hasAttribute('data-gallery');
+const live = !reducedMotion && Boolean(window.gsap);
 
 const players = mountPlayers(document, {
   ...(debug ? { log: (m) => commands.push(m) } : {}),
-  // The canvas's boards are driven by the story, step by step; without it they are never shown (nor mounted). The gallery
-  // drives its own boards (at most four playing).
-  manual: (figure) => inStage(figure) || inGallery(figure),
+  // The gallery drives its own boards (at most four playing).
+  manual: (figure) => figure.hasAttribute('data-gallery'),
 });
-// One sound switch for the page: the story's voice-over and the final cut.
+// The final cut's sound switch: off until its Play.
 const sound = soundSwitch();
-for (const p of players) if (p.figure.hasAttribute('data-controls')) finalCut(p, sound);
+const film = players.find((p) => p.figure.hasAttribute('data-controls'));
+if (film) finalCut(film, sound);
 const gallery = startGallery(players);
 
+let scenes = [];
 if (live) {
   root.classList.add('js-motion');
-  // The page's scroll-behavior is instant here (see site.css): an in-page link still glides to its target.
-  document.addEventListener('click', (e) => {
-    const a = e.target instanceof Element ? e.target.closest('a[href^="#"]') : null;
-    const target = a && a.getAttribute('href').length > 1 ? document.getElementById(a.getAttribute('href').slice(1)) : null;
-    if (!target || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
-    e.preventDefault();
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    history.pushState(null, '', a.getAttribute('href'));
-  });
-  window.gsap.registerPlugin(window.ScrollTrigger);
-  document.fonts.ready.then(() => {
-    const story = startStory({ gsap: window.gsap, ScrollTrigger: window.ScrollTrigger, players, sound });
-    if (debug) window.__siteDebug.story = story;
-    root.classList.add('motion-ready');
-  });
+  scenes = startScenes({ gsap: window.gsap });
+  root.classList.add('motion-ready');
 } else {
   root.classList.remove('js-motion');
 }
-if (debug) window.__siteDebug = { commands, players, sound, gallery, budget: players.budget };
+// One sound at a time: a demo's sound stops the film, the film's Play stops the demo's.
+const sounds = startSounds({ players, scenes, film });
+if (debug) window.__siteDebug = { commands, players, sound, gallery, budget: players.budget, scenes, sounds };
