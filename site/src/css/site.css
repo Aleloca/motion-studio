@@ -2,10 +2,6 @@
 *, *::before, *::after { box-sizing: border-box; }
 html { color-scheme: dark; -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
-/* The live story measures its scroll positions with ScrollTrigger, which jumps the page to the top to measure and back:
-   a smooth scroll-behavior makes those jumps animate, so a page loaded scrolled down measures every position off by its
-   scroll and the story freezes (decision 1905). With motion the in-page links scroll smoothly from main.js instead. */
-html.js-motion { scroll-behavior: auto; }
 body {
   margin: 0;
   background: var(--c-stage);

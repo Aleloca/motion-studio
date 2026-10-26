@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SITE, REPO } from './helpers.mjs';
-import { parseSteps, inSteps } from '../src/js/story-logic.js';
 import { GALLERY_IDS } from '../scripts/gallery-gen/build.mjs';
 
 const html = readFileSync(join(SITE, 'src', 'index.html'), 'utf8');
@@ -15,12 +14,12 @@ const section = (id) => new RegExp(`<section[^>]*id="${id}"[\\s\\S]*?</section>`
 const meta = (id) => JSON.parse(readFileSync(join(SITE, 'compositions', id, 'meta.json'), 'utf8'));
 const comp = (id) => JSON.parse(readFileSync(join(SITE, 'compositions', id, 'composition.json'), 'utf8'));
 
-const story = section('story');
-const stage = /<div class="stage"[\s\S]*?<p class="story__note">/.exec(story)[0];
-const steps = story.split('<li class="step"').slice(1).map((part) => ({
-  head: part.slice(0, part.indexOf('>')),
-  body: part.slice(0, part.indexOf('</li>')),
-}));
+const hero = section('story');
+const STEPS = ['ask', 'edit', 'brand', 'generate', 'formats', 'languages', 'subtitles', 'identity', 'export'];
+const steps = STEPS.map((id) => section(`step-${id}`));
+/** The story: the hero and its steps. */
+const story = [hero, ...steps].join('\n');
+const num = (tag, name) => Number(attr(tag, name));
 
 test('one h1, and headings never skip a level', () => {
   const levels = [...html.matchAll(/<h([1-6])\b/g)].map((m) => Number(m[1]));
@@ -29,22 +28,29 @@ test('one h1, and headings never skip a level', () => {
   levels.reduce((prev, l) => { assert.ok(l <= prev + 1, `h${prev} then h${l}`); return l; });
 });
 
-test('the page is the story, then the final cut, then Get started, then the gallery', () => {
+test('the page is the hero, one section per step, then the final cut, Get started and the gallery', () => {
   const ids = [...html.matchAll(/<section[^>]*\bid="([\w-]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(ids, ['story', 'final-cut', 'install', 'gallery']);
+  assert.deepEqual(ids, ['story', ...STEPS.map((id) => `step-${id}`), 'final-cut', 'install', 'gallery']);
   assert.ok(html.indexOf('id="gallery"') < html.indexOf('<footer'), 'the gallery comes before the footer');
 });
 
-test('the first viewport offers the download of the latest release and the final cut', () => {
-  const intro = /<div class="intro">[\s\S]*?<\/div>\s*<!--/.exec(story)[0];
-  assert.match(intro, /<h1\b/);
-  assert.ok(intro.includes(`class="btn btn--primary" href="${LATEST}"`), 'Download for macOS');
-  assert.match(intro, /Download for macOS/);
-  assert.match(intro, /href="#final-cut"/);
+test('the first viewport: the headline, the download of the latest release, the final cut, and step 1 playing by itself', () => {
+  const copy = /<div class="hero__copy">[\s\S]*?<\/div>\s*<\/div>/.exec(hero)[0];
+  assert.match(copy, /<h1\b/);
+  assert.ok(copy.includes(`class="btn btn--primary hero__download" href="${LATEST}"`), 'Download for macOS');
+  assert.match(copy, /Download for macOS/);
+  assert.match(copy, /href="#final-cut"/);
   assert.ok(html.includes(`class="btn btn--small topbar__download" href="${LATEST}"`), 'the bar\'s Download');
+  // Step 1: the brief, three variants, one chosen.
+  assert.match(hero, /<div class="demo demo--hero" data-scene="brief">/);
+  const boards = [...hero.matchAll(/<div class="board at[^"]*" data-board="(\w+)"/g)].map((m) => m[1]);
+  assert.deepEqual(boards, ['a', 'b', 'c']);
+  assert.match(hero, /data-board="c"[^>]*>\s*<p class="board__label">[^\n]*Chosen/);
+  assert.match(hero, /<p class="msg msg--you" data-type>A launch video for Motion Studio\. Three variants\.<\/p>/);
+  assert.match(hero, /<p class="msg msg--agent">[^<]+<\/p>/);
 });
 
-test('on a phone the bar offers Get it (to Get started, where the macOS download is) and the sound switch, not the macOS download', () => {
+test('on a phone the bar offers Get it (to Get started, where the macOS download is), not the macOS download', () => {
   assert.match(html, /<a class="btn btn--small topbar__get" href="#install">Get it<\/a>/);
   assert.ok(section('install').includes(LATEST), 'Get started links the latest release');
   const css = readFileSync(join(SITE, 'src', 'css', 'story.css'), 'utf8');
@@ -52,38 +58,71 @@ test('on a phone the bar offers Get it (to Get started, where the macOS download
   assert.match(css, /\.topbar__get \{ display: none;/);
 });
 
-test('eleven steps in order, each a static block: a title, what it shows, the exchange and the result', () => {
-  const names = ['Brief', 'Choose', 'Ask', 'Edit by hand', 'Brand', 'Generate', 'Formats', 'Languages', 'Subtitles', 'Identity', 'Export'];
-  assert.equal(steps.length, 11);
-  steps.forEach(({ head, body }, i) => {
-    assert.equal(attr(head, 'data-step'), String(i + 1));
-    const title = /<h2 class="step__title"><span class="step__n">(\d\d)<\/span> ([^<]+)<\/h2>/.exec(body);
-    assert.ok(title, `step ${i + 1} title`);
-    assert.equal(title[1], String(i + 1).padStart(2, '0'));
+test('one section per step, in order: a step label, a title, two lines of copy, and its demo with the exchange', () => {
+  const names = ['Ask', 'Edit by hand', 'Brand', 'Generate', 'Formats', 'Languages', 'Subtitles', 'Identity', 'Export'];
+  steps.forEach((body, i) => {
+    assert.match(body, new RegExp(`^<section class="step" id="step-${STEPS[i]}" aria-labelledby="${STEPS[i]}-title" data-scene="${STEPS[i]}">`));
+    const title = /<h2 class="step__title" id="[\w-]+"><span class="step__n">(\d\d) · ([^<]+)<\/span> ([^<]+)<\/h2>/.exec(body);
+    assert.ok(title, `step ${STEPS[i]} title`);
+    assert.equal(title[1], String(i + 2).padStart(2, '0'));
     assert.equal(title[2], names[i]);
-    assert.match(body, /<p class="step__what">[^<]+<\/p>/, `step ${i + 1} what`);
-    assert.match(body, /<p class="msg msg--(you|event)">[^<]+<\/p>/, `step ${i + 1} gesture`);
-    const result = body.slice(body.indexOf('<div class="step__result'));
-    const imgs = [...result.matchAll(/<img\b[^>]*>/g)].map((m) => m[0]);
-    assert.ok(imgs.length > 0 || /<ul class="files">/.test(result), `step ${i + 1} result`);
-    for (const img of imgs) {
-      for (const a of ['src', 'alt', 'width', 'height']) assert.ok(attr(img, a), `${a} in ${img}`);
-      const src = attr(img, 'src');
-      assert.ok(existsSync(join(SITE, 'src', src)) || existsSync(join(SITE, src)), src);
-      // Only the first step's posters load at once; the rest wait for the scroll.
-      assert.equal(img.includes('loading="lazy"'), i > 0, img);
-    }
+    const what = /<p class="step__what">([^<]+)<\/p>/.exec(body)[1];
+    assert.ok(what.length > 60 && what.length < 150, `${STEPS[i]}: two lines of copy (${what.length} chars)`);
+    assert.match(body, /<div class="demo">\s*<div class="demo__canvas">\s*<div class="scene" style="--sw:\d+;--sh:\d+;--psw:\d+;--psh:\d+">/, STEPS[i]);
+    assert.match(body, /<div class="chat" role="group" aria-label="The exchange">[\s\S]*?<p class="msg msg--(you|event)">[^<]+<\/p>/, `${STEPS[i]}: the gesture`);
   });
+});
+
+test('the chat is drawn, never an input: no field, no caret, no send button', () => {
+  const chats = [...story.matchAll(/<div class="chat"[\s\S]*?<\/div>/g)].map((m) => m[0]);
+  assert.equal(chats.length, 10);
+  for (const c of chats) assert.doesNotMatch(c, /<(input|textarea|button|form)\b|contenteditable|tabindex/);
+  assert.doesNotMatch(html, /chat__composer|chat__caret|chat__field|chat__send|⌘↵|Describe what to change/);
+  assert.doesNotMatch(html, /<textarea|contenteditable/);
+});
+
+test('every board and panel of a demo has its place in the scene, inside it and clear of the others, on a computer and on a phone', () => {
+  for (const body of [hero, ...steps]) {
+    const scene = /<div class="scene" style="([^"]+)">/.exec(body)[1];
+    const v = (n) => Number(new RegExp(`--${n}:([\\d.]+)`).exec(scene)[1]);
+    const items = [...body.matchAll(/<(?:div|p) class="[^"]*\bat\b[^"]*"[^>]*>/g)].map((m) => m[0]);
+    assert.ok(items.length > 0, body.slice(0, 60));
+    for (const phone of [false, true]) {
+      const [sw, sh] = phone ? [v('psw'), v('psh')] : [v('sw'), v('sh')];
+      // A board's label sits above it: its box starts 20 units higher.
+      const boxes = items.filter((t) => !(phone && t.includes('at--wide'))).map((t) => {
+        const st = attr(t, 'style');
+        const g = (n) => { const m = new RegExp(`--${phone ? 'p' : ''}${n}:(-?[\\d.]+)`).exec(st) ?? new RegExp(`--${n}:(-?[\\d.]+)`).exec(st); return Number(m[1]); };
+        const label = t.includes('class="board') ? 20 : 0;
+        return { t, x: g('x'), y: g('y') - label, w: g('w'), h: g('h') + label };
+      });
+      for (const b of boxes) assert.ok(b.x >= 0 && b.y >= 0 && b.x + b.w <= sw + 0.01 && b.y + b.h <= sh + 0.01, `${phone ? 'phone' : 'computer'}: ${b.t} out of its ${sw}×${sh} scene`);
+      boxes.forEach((p, i) => boxes.slice(i + 1).forEach((q) => {
+        const hit = p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h;
+        assert.ok(!hit, `${phone ? 'phone' : 'computer'}: ${p.t} and ${q.t} overlap`);
+      }));
+    }
+  }
+});
+
+test('a new version wipes in over the poster of the one before it', () => {
+  const frames = [...story.matchAll(/<div class="board__frame">([\s\S]*?)<\/figure>/g)].map((m) => m[1]).filter((f) => f.includes('data-wipe'));
+  assert.equal(frames.length, 5, 'v2, v3, v4, v5 and v6');
+  for (const f of frames) {
+    const before = /<img class="board__before" src="([^"]+)"[^>]*alt=""/.exec(f);
+    assert.ok(before, f.slice(0, 120));
+    assert.ok(existsSync(join(SITE, before[1])), before[1]);
+  }
 });
 
 test('the chat is labelled once as a demo', () => {
   assert.equal((visibleText.match(/\bdemo\b/gi) ?? []).length, 1);
-  assert.match(story, /<p class="story__note">[^<]*demo[^<]*real features[^<]*<\/p>/);
+  assert.match(hero, /<p class="hero__note">[^<]*demo[^<]*real features[^<]*<\/p>/);
 });
 
 test('every composition figure has a poster with alt and size, of a composition that exists, from its poster time', () => {
   const figures = [...html.matchAll(/<figure class="comp[^"]*"[^>]*>([\s\S]*?)<\/figure>/g)];
-  assert.equal(figures.length, 27, '14 on the canvas, the final cut and 12 in the gallery');
+  assert.equal(figures.length, 27, '14 in the story, the final cut and 12 in the gallery');
   for (const [whole, inner] of figures) {
     const id = attr(whole, 'data-composition');
     assert.ok(existsSync(join(SITE, 'compositions', id, 'composition.json')), id);
@@ -107,8 +146,8 @@ test('every poster offers its half-size file, which a phone takes; a wide screen
 });
 
 test('the story\'s boards loop from a time inside their composition, past the typed brief', () => {
-  const tags = [...stage.matchAll(/<figure\b[^>]*>/g)].map((m) => m[0]).filter((t) => attr(t, 'data-composition').startsWith('story-'));
-  assert.ok(tags.length >= 12);
+  const tags = [...story.matchAll(/<figure\b[^>]*>/g)].map((m) => m[0]).filter((t) => attr(t, 'data-composition').startsWith('story-'));
+  assert.equal(tags.length, 13);
   for (const tag of tags) {
     const id = attr(tag, 'data-composition');
     const from = Number(attr(tag, 'data-loop-from'));
@@ -116,21 +155,22 @@ test('the story\'s boards loop from a time inside their composition, past the ty
   }
 });
 
-test('every board and panel has a place in the world and a step range; a figure\'s steps lie inside its board\'s', () => {
-  const boards = [...stage.matchAll(/<div class="(?:board|panel)\b[^"]*"[^>]*>/g)].map((m) => m[0]);
-  assert.ok(boards.length >= 15);
-  for (const tag of boards) {
-    const style = attr(tag, 'style');
-    for (const v of ['--x', '--y', '--w', '--h']) assert.match(style, new RegExp(`${v}:-?[\\d.]+`), tag);
-    const range = parseSteps(attr(tag, 'data-steps'));
-    assert.ok(range.every(([a, b]) => a >= 1 && b <= 11 && a <= b), tag);
+test('only the hero\'s pictures load at once; the steps\' wait for the scroll', () => {
+  for (const img of [...hero.matchAll(/<img\b[^>]*>/g)].map((m) => m[0])) assert.doesNotMatch(img, /loading="lazy"/, img);
+  for (const body of steps) for (const img of [...body.matchAll(/<img\b[^>]*>/g)].map((m) => m[0])) assert.match(img, /loading="lazy"/, img);
+});
+
+test('every step\'s demo shows its result as real pictures, each with its size and an existing file', () => {
+  for (const body of [hero, ...steps]) {
+    const imgs = [...body.matchAll(/<img\b[^>]*>/g)].map((m) => m[0]);
+    assert.ok(imgs.length > 0 || /<ul class="export__rows">/.test(body), body.slice(0, 60));
+    for (const img of imgs) {
+      for (const a of ['src', 'width', 'height']) assert.ok(attr(img, a), `${a} in ${img}`);
+      assert.ok(/\balt="/.test(img), `alt in ${img}`);
+      const src = attr(img, 'src');
+      assert.ok(existsSync(join(SITE, 'src', src)) || existsSync(join(SITE, src)), src);
+    }
   }
-  const c = /<div class="board board--main"[\s\S]*?<!-- Step 4/.exec(stage)[0];
-  const range = parseSteps(attr(c, 'data-steps'));
-  const figs = [...c.matchAll(/<figure\b[^>]*>/g)].map((m) => parseSteps(attr(m[0], 'data-steps')));
-  assert.equal(figs.length, 6, 'board C: v1, v2, v3, v4, v5 (the backdrop), v6 (subtitles)');
-  for (const f of figs) for (const [a, b] of f) assert.ok(inSteps(range, a) && inSteps(range, b));
-  for (let n = 1; n <= 11; n++) assert.ok(figs.some((f) => inSteps(f, n)), `C has a version in step ${n}`);
 });
 
 test('the final cut: a composition player with controls, its poster, and the one slot the launch video takes', () => {
@@ -185,40 +225,32 @@ test('no external URLs other than the repo, its pages and the Claude Code docs',
   for (const u of urls) assert.ok(u.startsWith(REPO_URL) || u.startsWith('https://aleloca.github.io/motion-studio/') || u.startsWith('https://docs.claude.com/'), u);
 });
 
-test('every step says its voice-over line: the film\'s line of that beat, or (subtitles) its board\'s own voice', () => {
+test('nothing speaks by itself: only Generate and Subtitles have a Play with sound control, shown by the script', () => {
+  assert.doesNotMatch(html, /\bautoplay\b(?!=)|<audio\b|<video\b/);
+  assert.doesNotMatch(html, /story__sound|data-voice="board"/);
+  const controls = [...html.matchAll(/<button class="sound-play" type="button" data-sound-play="(\w+)"[^>]*\bhidden>[\s\S]*?<\/button>/g)];
+  assert.deepEqual(controls.map((m) => m[1]), ['generate', 'subtitles']);
+  for (const [whole] of controls) assert.match(whole, /Play with sound/);
+  assert.ok(section('step-generate').includes('data-sound-play="generate"'));
+  assert.ok(section('step-subtitles').includes('data-sound-play="subtitles"'));
+  for (const m of html.matchAll(/data-(?:voice|music)="([^"]+)"/g)) assert.ok(existsSync(join(SITE, m[1])), m[1]);
   const vo = JSON.parse(readFileSync(join(SITE, 'scripts', 'audio-gen', 'media.json'), 'utf8')).vo;
-  steps.forEach(({ head }, i) => {
-    const voice = attr(head, 'data-voice');
-    if (i + 1 === 9) { assert.equal(voice, 'board'); return; }
-    assert.equal(voice, `compositions/launch-16x9/assets/audio/${vo[i].file}`, `step ${i + 1}`);
-    assert.ok(existsSync(join(SITE, voice)), voice);
-  });
+  assert.match(section('step-generate'), new RegExp(`data-voice="compositions/launch-16x9/assets/audio/${vo[5].file}"`));
   const subs = comp('story-subs').tracks.flatMap((t) => t.clips).find((c) => c.type === 'audio');
-  assert.equal(subs.script, vo[8].text);
-  // The story's sound button sits outside the aria-hidden canvas, off until story.js shows it.
-  assert.match(story, /<button class="sound-btn story__sound" type="button" data-sound hidden>[\s\S]*?Sound on/);
-  const hiddenCanvas = stage.slice(0, stage.indexOf('<div class="caption">'));
-  assert.doesNotMatch(hiddenCanvas, /data-sound/);
-  assert.match(stage, /<div class="caption">[\s\S]*?<\/div><\/div>\s*<\/div>\s*<!--[^>]*-->\s*<button class="sound-btn story__sound"/, 'the button follows the canvas');
+  assert.equal(subs.script, vo[8].text, 'the subtitled board says the film\'s subtitles line');
 });
 
 test('the Generate step: the backdrop it makes lands in board C, with the film\'s own voice and music; the paid call confirmed first, no invented price', () => {
-  const gen = steps[5].body;
+  const gen = section('step-generate');
   assert.match(gen, /<p class="msg msg--you">[^<]+<\/p>/);
-  assert.match(gen, /<div class="msg msg--paid">[\s\S]*Generate an image with gpt-image-2[\s\S]*your own OpenAI account[\s\S]*<\/div>/);
+  assert.match(gen, /<div class="genpanel__paid">[\s\S]*Generate an image with gpt-image-2[\s\S]*your own OpenAI account[\s\S]*<\/div>/);
   assert.doesNotMatch(story, /\$\s?\d|\d\s?USD|€/, 'no price anywhere in the story');
-  assert.match(gen, /src="compositions\/story-backdrop-16x9\/poster\.webp"/);
-  assert.match(gen, /<audio controls preload="none" src="compositions\/launch-16x9\/assets\/audio\/music\.mp3"><\/audio>/);
-  assert.match(stage, /data-composition="story-backdrop-16x9"[^>]*data-steps="6-8"/);
-  // The story no longer generates earbuds (the gallery's KOVA board is an earbuds launch: that is fine).
+  assert.match(gen, /data-composition="story-backdrop-16x9"[^>]*data-wipe/);
   assert.doesNotMatch(story, /gpt-4o-mini-tts|cedar|earbuds/);
   assert.doesNotMatch(html, /gpt-4o-mini-tts|cedar/);
-  for (const m of stage.matchAll(/data-play="([^"]+)"/g)) assert.ok(existsSync(join(SITE, m[1])), m[1]);
-  assert.match(gen, /<audio controls preload="none" src="compositions\/launch-16x9\/assets\/audio\/vo-06\.mp3"><\/audio>/);
   const media = JSON.parse(readFileSync(join(SITE, 'scripts', 'audio-gen', 'media.json'), 'utf8'));
   assert.ok(gen.includes(media.image.model) && gen.includes(media.voice.model), 'the models that really made them');
-  assert.match(stage, /data-board="genimg" data-steps="6"/);
-  assert.match(stage, /<div class="panel genpanel" data-steps="6"/);
+  assert.ok(gen.includes(`data-music="compositions/launch-16x9/assets/audio/${media.music.file}"`));
 });
 
 test('the gallery: twelve boards on the canvas, each a real composition with its name, mono format label and topic and style', () => {

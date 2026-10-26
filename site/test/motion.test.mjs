@@ -20,14 +20,14 @@ test('final states are the CSS default', () => {
 test('vendor files are pinned 3.13.0', () => {
   const dir = join(SITE, 'src', 'vendor', 'gsap');
   const files = readdirSync(dir).filter((f) => f.endsWith('.js'));
-  assert.deepEqual(files.sort(), ['ScrollTrigger.min.js', 'SplitText.min.js', 'gsap.min.js']);
+  assert.deepEqual(files.sort(), ['SplitText.min.js', 'gsap.min.js']);
   for (const f of files) assert.match(readFileSync(join(dir, f), 'utf8').slice(0, 400), /3\.13\.0/, f);
 });
 
 test('index.html loads no script from another origin', () => {
   const html = src('index.html');
   const scripts = [...html.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1]);
-  assert.ok(scripts.length >= 4);
+  assert.ok(scripts.length >= 3);
   for (const attrs of scripts) assert.doesNotMatch(attrs, /src="(https?:)?\/\//);
   assert.match(html, /<script type="module" src="js\/main\.js"><\/script>/);
 });
@@ -38,15 +38,17 @@ test('main.js marks motion only when it is allowed', () => {
   assert.match(main, /classList\.add\('js-motion'\)/);
 });
 
-test('the story is scroll-linked, never scroll-jacked: no snapping, no wheel or touch handlers, no pinning spacer', () => {
-  const story = src('js/story.js');
-  assert.match(story, /scrub:/);
-  assert.doesNotMatch(story, /snap|addEventListener\('(wheel|touchmove|keydown)'|preventDefault|pin:\s*true|window\.scrollTo|scrollIntoView/);
-  assert.match(src('css/story.css'), /\.js-motion \.story__pin \{ position: sticky;/);
+test('the demos run by themselves: no scroll scrubbing, no pinned or sticky story, no scroll handlers', () => {
+  const scenes = src('js/scenes.js');
+  assert.match(scenes, /IntersectionObserver/);
+  assert.doesNotMatch(scenes + src('js/main.js'), /ScrollTrigger|scrub|snap|addEventListener\('(scroll|wheel|touchmove|keydown)'|preventDefault|scrollTo|scrollIntoView/);
+  assert.doesNotMatch(src('index.html'), /ScrollTrigger/);
+  assert.doesNotMatch(src('css/story.css') + src('css/site.css'), /position: sticky/);
 });
 
-test('with motion the page scrolls instantly: a smooth scroll-behavior breaks the story\'s measurements when it loads scrolled down', () => {
+test('in-page links glide, except under reduced motion', () => {
   const css = src('css/site.css');
-  assert.match(css, /html\.js-motion \{ scroll-behavior: auto; \}/);
-  assert.match(src('js/main.js'), /scrollIntoView\(\{ behavior: 'smooth'/, 'in-page links still glide');
+  assert.match(css, /html \{[^}]*scroll-behavior: smooth;/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{ html \{ scroll-behavior: auto; \} \}/);
+  assert.doesNotMatch(css, /html\.js-motion \{ scroll-behavior/);
 });
