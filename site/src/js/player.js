@@ -6,6 +6,8 @@ import { decide, isVisible, VISIBLE_RATIO } from './player-logic.js';
 // Generous: the poster covers the frame until the runtime is ready, so a slow first load costs nothing visible. A cold
 // first composition (runtime, preview.js and fonts) took over 8 s on a slow machine.
 export const READY_TIMEOUT_MS = 20000;
+/** Seconds before its end a looping board with `data-loop-from` jumps back. */
+const LOOP_LEAD = 0.12;
 
 /**
  * At most this many live runtimes on the whole page at once. Each runtime is a page with its fonts, its frames (an html
@@ -78,6 +80,8 @@ export class CompositionPlayer {
     this.replayFromPoster = figure.dataset.replay === 'poster';
     /** data-loop-from (seconds): where the loop starts again, past an opening that is still empty (t = 0 always is). */
     this.loopFrom = Number(figure.dataset.loopFrom ?? 0) || 0;
+    /** Just jumped back from its end (see LOOP_LEAD): the reports still on their way are not a second end. */
+    this.jumping = false;
     /** The last time the runtime reported while playing: a smaller one means it wrapped to the start. */
     this.lastTime = 0;
     /** The time of the first played frame the runtime reported since it was mounted. */
@@ -271,10 +275,18 @@ export class CompositionPlayer {
       if (this.firstPlayed === null) this.firstPlayed = data.t;
       else if (data.t !== this.firstPlayed) this.figure.classList.add('is-ready');
       const wrapped = data.t < this.lastTime && data.t < this.loopFrom;
+      // A looping board with an empty opening jumps back just before its end: the runtime's own wrap would draw its first
+      // (empty) frame before the jump.
+      if (this.jumping && data.t < this.duration - LOOP_LEAD) this.jumping = false;
+      const ending = this.loop && this.loopFrom > 0 && this.duration > 0 && !this.jumping && data.t >= this.duration - LOOP_LEAD;
       this.lastTime = data.t;
       this.time = data.t;
       this.emit();
-      if (wrapped && this.playing) {
+      if (ending && this.playing) {
+        this.jumping = true;
+        this.seek(this.loopFrom);
+        this.send({ type: 'play', loop: true });
+      } else if (wrapped && this.playing && !this.jumping) {
         // A seek stops the runtime's playback: play again from there.
         this.seek(this.loopFrom);
         this.send({ type: 'play', loop: true });
