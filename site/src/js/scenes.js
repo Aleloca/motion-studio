@@ -275,7 +275,7 @@ const BUILD = {
     k.enter(paid, ask, { y: 14, scale: 0.96 });
     k.cursor([[ask + 0.35, 0.55, go, 'click']]);
     const yes = ask + 0.95;
-    k.tl.to(paid, { autoAlpha: 0, y: 6, duration: 0.2, ease: 'power1.in' }, yes + 0.12);
+    k.tl.to(paid, { autoAlpha: 0, duration: 0.2, ease: 'power1.in' }, yes + 0.12);
     const voiceAt = yes + 0.9;
     k.state((s) => {
       done.classList.toggle('is-on', s >= yes + 0.25);

@@ -86,7 +86,7 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
 @container canvas (max-width: 459px) {
   .scene { --W0: var(--psw); --H0: var(--psh); --layout: phone; }
   .at { --X: var(--px, var(--x)); --Y: var(--py, var(--y)); --W: var(--pw, var(--w)); --H: var(--ph, var(--h)); }
-  .at--wide { display: none; }
+  .at.at--wide { display: none; }
 }
 
 /* Boards: a format on the canvas, with its mono label above it */
@@ -132,10 +132,11 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
 .panel__head { display: flex; align-items: baseline; justify-content: space-between; gap: .8em; margin: 0 0 .9em; font-weight: 600; }
 .panel__sub { font: 400 .85em/1.3 var(--f-mono); color: var(--c-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .inspector { display: flex; flex-direction: column; }
-.inspector__fields { display: grid; gap: .55em; margin: 0 0 auto; }
+.inspector__fields { display: grid; gap: .4em; margin: 0 0 auto; }
 .inspector__fields > div { display: grid; grid-template-columns: 3.6em 1fr; align-items: center; }
 .inspector__fields dt { color: var(--c-muted); }
 .inspector__fields dd { display: flex; align-items: center; gap: .55em; margin: 0; padding: .4em .65em; border-radius: .5em; background: #222; font: 500 .95em/1.2 var(--f-mono); font-variant-numeric: tabular-nums; }
+.inspector__fields dd { padding-block: .35em; }
 .swatch { width: 1.2em; height: 1.2em; border-radius: .3em; background: var(--swatch, #FACC15); box-shadow: inset 0 0 0 1px #ffffff22; }
 .inspector__save { align-self: flex-start; display: inline-flex; margin-top: .8em; padding: .5em .9em; border-radius: .6em; background: var(--c-text); color: #141414; font-weight: 600; transition: background-color .15s; }
 .inspector__save.is-pressed { background: var(--c-orange); }
