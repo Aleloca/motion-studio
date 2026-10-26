@@ -105,7 +105,8 @@ export class CompositionPlayer {
     this.scenes = [];
     this.time = 0;
     this.listeners = new Set();
-    this.state = { visible: false, near: false, reducedMotion: false, still: false, intent: null };
+    /** data-priority: its rank in the page's budget of live runtimes among players equally on screen (higher wins). */
+    this.state = { visible: false, near: false, reducedMotion: false, still: false, intent: null, priority: Number(figure.dataset.priority ?? 0) || 0 };
     /** Silent unless the page's sound is on (setMuted): browsers allow sound only after a gesture. */
     this.muted = true;
   }

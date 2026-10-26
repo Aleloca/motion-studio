@@ -401,3 +401,11 @@ test('an unloaded runtime lets go of its page: about:blank, then removed', () =>
 test('two live runtimes on a phone, four on a wide screen', () => {
   assert.deepEqual(LIVE_BUDGET, { phone: 2, desktop: 4 });
 });
+
+test('a figure\'s data-priority ranks it in the budget from the start: the chosen board wins a phone\'s slot over the others', () => {
+  const h = harness();
+  assert.equal(h.player.state.priority, 0);
+  const figure = { dataset: { composition: 'story-signal-v1', priority: '2' }, classList: { add() {}, remove() {} } };
+  const p = new CompositionPlayer(figure, { origin: ORIGIN, mount: () => ({}), setTimeout: () => 0, clearTimeout: () => {} });
+  assert.equal(p.state.priority, 2);
+});
