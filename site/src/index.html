@@ -289,14 +289,18 @@
   <section class="step" id="step-formats" aria-labelledby="formats-title" data-scene="formats">
     <div class="step__copy">
       <h2 class="step__title" id="formats-title"><span class="step__n">06 · Formats</span> Every format, recomposed.</h2>
-      <p class="step__what">The 16:9 becomes a Reel and a square post, each laid out again for its own frame. Never cropped.</p>
+      <p class="step__what">The chosen 16:9 becomes a Reel and a square post, each laid out again for its own frame. Never cropped.</p>
     </div>
     <div class="demo">
       <div class="demo__canvas">
         <div class="scene" style="--sw:560;--sh:252;--psw:340;--psh:278">
           <div class="board at" data-board="c" style="--x:0;--y:26;--w:300;--h:168.75;--px:156;--py:24;--pw:184;--ph:103.5">
-            <p class="board__label"><span class="board__name">Video 16:9</span></p>
-            <div class="board__frame"><img class="board__still" src="compositions/story-brand-16x9/poster.webp" srcset="compositions/story-brand-16x9/poster-half.webp 960w, compositions/story-brand-16x9/poster.webp 1920w" sizes="(max-width: 959px) 320px, 100vw" alt="The 16:9 video it started from." width="1920" height="1080" loading="lazy"></div>
+            <p class="board__label"><span class="board__name">C · Signal 16:9</span><span class="board__ver">v5</span></p>
+            <div class="board__frame">
+              <figure class="comp comp--16x9" data-composition="story-backdrop-16x9" data-poster-time="4.6" data-loop-from="2.4" data-priority="2">
+                <div class="comp-stage"><img class="poster" src="compositions/story-backdrop-16x9/poster.webp" srcset="compositions/story-backdrop-16x9/poster-half.webp 960w, compositions/story-backdrop-16x9/poster.webp 1920w" sizes="(max-width: 959px) 320px, 100vw" alt="The chosen variant, C · Signal v5, in 16:9: the 9:16 and the 1:1 are recomposed from it." width="1920" height="1080" loading="lazy"></div>
+              </figure>
+            </div>
           </div>
           <div class="board at" data-board="f11" data-from="c" style="--x:316;--y:26;--w:104;--h:104;--px:156;--py:152;--pw:122;--ph:122">
             <p class="board__label"><span class="board__name">Post 1:1</span></p>
@@ -326,15 +330,19 @@
 
   <section class="step" id="step-languages" aria-labelledby="languages-title" data-scene="languages">
     <div class="step__copy">
-      <h2 class="step__title" id="languages-title"><span class="step__n">07 · Languages</span> Ten languages, one layout.</h2>
-      <p class="step__what">Only the words change. Positions, timing and colours stay the original’s, and every line still fits its box.</p>
+      <h2 class="step__title" id="languages-title"><span class="step__n">07 · Languages</span> Any language, one layout.</h2>
+      <p class="step__what">Name the languages and Claude translates. Only the words change: positions, timing and colours stay, and every line fits its box.</p>
     </div>
     <div class="demo">
       <div class="demo__canvas">
         <div class="scene" style="--sw:560;--sh:362;--psw:340;--psh:236">
           <div class="board at" data-board="c" style="--x:0;--y:26;--w:272;--h:153;--px:0;--py:24;--pw:162;--ph:91.125">
             <p class="board__label"><span class="board__name">16:9 · English</span></p>
-            <div class="board__frame"><img class="board__still" src="compositions/story-brand-16x9/poster.webp" srcset="compositions/story-brand-16x9/poster-half.webp 960w, compositions/story-brand-16x9/poster.webp 1920w" sizes="(max-width: 959px) 320px, 100vw" alt="The 16:9 in English, the original." width="1920" height="1080" loading="lazy"></div>
+            <div class="board__frame">
+              <figure class="comp comp--16x9" data-composition="story-backdrop-16x9" data-poster-time="4.6" data-loop-from="2.4">
+                <div class="comp-stage"><img class="poster" src="compositions/story-backdrop-16x9/poster.webp" srcset="compositions/story-backdrop-16x9/poster-half.webp 960w, compositions/story-backdrop-16x9/poster.webp 1920w" sizes="(max-width: 959px) 320px, 100vw" alt="The 16:9 in English, the original." width="1920" height="1080" loading="lazy"></div>
+              </figure>
+            </div>
           </div>
           <div class="board at" data-board="it" data-from="c" style="--x:288;--y:26;--w:272;--h:153;--px:178;--py:24;--pw:162;--ph:91.125">
             <p class="board__label"><span class="board__name">16:9 · Italiano</span></p>
@@ -406,51 +414,9 @@
     </div>
   </section>
 
-  <section class="step" id="step-identity" aria-labelledby="identity-title" data-scene="identity">
-    <div class="step__copy">
-      <h2 class="step__title" id="identity-title"><span class="step__n">09 · Identity</span> A logo becomes real file sets.</h2>
-      <p class="step__what">Favicon, app icons and a social preview, rendered from the logo. This site’s own came out of Motion Studio.</p>
-    </div>
-    <div class="demo">
-      <div class="demo__canvas">
-        <div class="scene" style="--sw:560;--sh:304;--psw:340;--psh:212">
-          <div class="board at" data-board="identity" style="--x:0;--y:26;--w:250;--h:250;--px:0;--py:24;--pw:160;--ph:160">
-            <p class="board__label"><span class="board__name">Logo 1:1</span></p>
-            <div class="board__frame">
-              <figure class="comp comp--1x1" data-composition="identity" data-poster-time="5">
-                <div class="comp-stage"><img class="poster" src="compositions/identity/poster.webp" srcset="compositions/identity/poster-half.webp 540w, compositions/identity/poster.webp 1080w" sizes="(max-width: 959px) 320px, 100vw" alt="The Motion Studio mark turning into a favicon, an app icon and store screenshots." width="1080" height="1080" loading="lazy"></div>
-              </figure>
-            </div>
-          </div>
-          <div class="board board--asset at" data-board="appicon" style="--x:266;--y:26;--w:96;--h:96;--px:176;--py:24;--pw:72;--ph:72">
-            <p class="board__label"><span class="board__name">App icon</span></p>
-            <div class="board__frame board__frame--icon"><img src="assets/app-icon.png" alt="The Motion Studio app icon." width="1024" height="1024" loading="lazy"></div>
-          </div>
-          <div class="board board--asset at" data-board="favicon" style="--x:378;--y:26;--w:182;--h:96;--px:264;--py:24;--pw:76;--ph:72">
-            <p class="board__label"><span class="board__name">Favicon</span></p>
-            <div class="board__frame board__frame--favicons">
-              <img src="assets/favicon/favicon.svg" alt="" width="48" height="48" loading="lazy">
-              <img src="assets/favicon/favicon.svg" alt="" width="32" height="32" loading="lazy">
-              <img src="assets/favicon/favicon.svg" alt="" width="16" height="16" loading="lazy">
-            </div>
-          </div>
-          <div class="board board--asset at" data-board="social" style="--x:266;--y:148;--w:243.8;--h:128;--px:176;--py:120;--pw:164;--ph:86.1">
-            <p class="board__label"><span class="board__name">Social preview 1200×630</span></p>
-            <div class="board__frame"><img src="assets/og-image.png" alt="The social preview image." width="1200" height="630" loading="lazy"></div>
-          </div>
-        </div>
-      </div>
-      <div class="chat" role="group" aria-label="The exchange">
-        <p class="chat__head" aria-hidden="true"><span>Chat</span></p>
-        <p class="msg msg--you">Turn the logo into a favicon, an app icon and a social preview.</p>
-        <p class="msg msg--agent">Rendered: a favicon set with its head snippet, iOS and Android icons, and a 1200×630 preview.</p>
-      </div>
-    </div>
-  </section>
-
   <section class="step" id="step-export" aria-labelledby="export-title" data-scene="export">
     <div class="step__copy">
-      <h2 class="step__title" id="export-title"><span class="step__n">10 · Export</span> One click, every channel.</h2>
+      <h2 class="step__title" id="export-title"><span class="step__n">09 · Export</span> One click, every channel.</h2>
       <p class="step__what">Every starred version rendered on your computer and named for its channel. Existing files are never overwritten.</p>
     </div>
     <div class="demo">
@@ -520,7 +486,8 @@
       <div class="install__ways">
         <div class="way way--main">
           <h3>Desktop app</h3>
-          <p>From the <a href="https://github.com/Aleloca/motion-studio/releases/latest">latest release</a>:</p>
+          <a class="btn btn--primary way__download" href="https://github.com/Aleloca/motion-studio/releases/latest"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download for macOS</a>
+          <p>Every build is in the <a href="https://github.com/Aleloca/motion-studio/releases/latest">latest release</a>:</p>
           <ul class="reqs">
             <li>macOS: the <code>.dmg</code> for Apple Silicon or Intel, signed and notarized.</li>
             <li>Windows: the <code>.exe</code> installer, not signed yet (SmartScreen: More info, then Run anyway).</li>
@@ -533,21 +500,11 @@
 cd motion-studio
 pnpm install
 pnpm motion-studio</code></pre>
-          <p class="muted small">Builds and starts on 127.0.0.1:4317, then opens the browser.</p>
         </div>
         <div class="way">
           <h3>From npm</h3>
           <p><code>npx @motion-studio/cli</code></p>
           <p class="muted small">Node 22 or newer and Chrome. Starts Motion Studio and opens it in the browser.</p>
-        </div>
-        <div class="way way--reqs">
-          <h3>Requirements</h3>
-          <ul class="reqs">
-            <li><a href="https://docs.claude.com/claude-code">Claude Code</a>, installed and signed in</li>
-            <li>Git</li>
-            <li>FFmpeg, to render videos</li>
-            <li>Node.js 22 or newer, for the sources and npx</li>
-          </ul>
         </div>
       </div>
     </div>

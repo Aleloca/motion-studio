@@ -50,6 +50,7 @@ function scene(root, gsap) {
     const ctx = gsap.context(() => {
       k = kit(gsap, demo, stage);
       const end = BUILD[name](k);
+      holdChat(k);
       k.tl.to({}, { duration: HOLD }, end);
       k.tl.to([stage, k.chat], { opacity: 0, duration: OUT, ease: 'power1.in' });
       k.tl.fromTo([stage, k.chat], { opacity: 0 }, { opacity: 1, duration: 0.35, ease: 'power1.out', immediateRender: false }, 0);
@@ -62,7 +63,9 @@ function scene(root, gsap) {
   };
   build();
   // The demo lays itself out again for a phone's narrow canvas: the moves are measured again.
+  let width = demo.offsetWidth;
   new ResizeObserver(() => {
+    if (demo.offsetWidth !== width) { width = demo.offsetWidth; built.k.measureChat?.(); }
     if (layout() === built.layout) return;
     const t = built.k.tl.time();
     build();
@@ -112,14 +115,15 @@ function kit(gsap, demo, stage) {
       tl.fromTo(el, { autoAlpha: 0, ...from }, { autoAlpha: 1, x: 0, y: 0, xPercent: 0, yPercent: 0, scale: 1 }, at);
       return at;
     },
-    /** The visitor's request types itself into its bubble (the bubble keeps its size: nothing below it moves). */
+    /**
+     * The visitor's request types itself into its bubble, which grows with it from its first letters (never an empty
+     * bubble). The chat keeps the height of its finished state (`holdChat`): nothing below it moves.
+     */
     type(bubble, at, dur = 1.4) {
       const full = bubble.textContent;
-      const done = h('span'); const rest = h('span', 'msg__rest');
-      bubble.replaceChildren(done, rest);
       k.enter(bubble, at, { y: 8 });
-      k.state((t) => { const s = typed(full, (t - at - 0.15) / dur); done.textContent = s; rest.textContent = full.slice(s.length); });
-      return at + 0.15 + dur;
+      k.state((t) => { bubble.textContent = t >= at ? typed(full, Math.max((t - at) / dur, 2 / full.length)) : full; });
+      return at + dur;
     },
     /** The agent's turn: "Working…" in the answer's place, then the answer. Returns when the answer is in. */
     answer(bubble, at, work = WORK) {
@@ -325,16 +329,6 @@ const BUILD = {
     return t + 2;
   },
 
-  /** The logo's file sets appear. */
-  identity(k) {
-    const [you, agent] = k.qa('.chat .msg');
-    let t = k.type(you, 0.3, 1.4);
-    const work = t + 0.2;
-    ['identity', 'appicon', 'favicon', 'social'].forEach((id, i) => k.enter(k.board(id), work + 0.3 + i * 0.12, { y: 18, scale: 0.94 }));
-    t = k.answer(agent, work, 1.2);
-    return t + 0.6;
-  },
-
   /** Export pressed: every file fills, then done. */
   export(k) {
     const [event] = k.qa('.chat .msg');
@@ -358,6 +352,22 @@ const BUILD = {
 };
 
 /* ---------------------------------------------------------------- helpers */
+
+/**
+ * The chat keeps the height of its finished state while the requests type and the answers come: measured with every text
+ * whole (at the end of the act), and again whenever its width changes.
+ */
+function holdChat(k) {
+  const measure = () => {
+    const t = k.tl.time();
+    k.chat.style.minHeight = '';
+    k.render(k.actEnd ?? 1e6);
+    k.chat.style.minHeight = `${k.chat.offsetHeight}px`;
+    k.render(t);
+  };
+  k.measureChat = measure;
+  requestAnimationFrame(measure);
+}
 
 /** An element's centre in its scene, in pixels, from the layout (not from transforms, which the timeline moves). */
 function center(el, stage) {

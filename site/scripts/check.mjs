@@ -87,7 +87,7 @@ export async function check({ out } = {}) {
         if (s.live === reduced) problems.push(`the story is ${s.live ? 'live' : 'static'} ${reduced ? 'under' : 'without'} reduced motion`);
         if (s.stagePlaying.length) problems.push(`demo boards still playing off screen: ${s.stagePlaying.join(', ')}`);
         if (!s.finalCut) problems.push('the final cut\'s slot or controls are missing');
-        if (s.steps.length !== 10) problems.push(`${s.steps.length} demos, not 10`);
+        if (s.steps.length !== 9) problems.push(`${s.steps.length} demos, not 9`);
         if (s.soundControls !== 2) problems.push(`${s.soundControls} Play with sound controls, not 2`);
         if (reduced) {
           for (const st of s.steps) {

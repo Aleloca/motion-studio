@@ -15,7 +15,7 @@ const meta = (id) => JSON.parse(readFileSync(join(SITE, 'compositions', id, 'met
 const comp = (id) => JSON.parse(readFileSync(join(SITE, 'compositions', id, 'composition.json'), 'utf8'));
 
 const hero = section('story');
-const STEPS = ['ask', 'edit', 'brand', 'generate', 'formats', 'languages', 'subtitles', 'identity', 'export'];
+const STEPS = ['ask', 'edit', 'brand', 'generate', 'formats', 'languages', 'subtitles', 'export'];
 const steps = STEPS.map((id) => section(`step-${id}`));
 /** The story: the hero and its steps. */
 const story = [hero, ...steps].join('\n');
@@ -59,7 +59,7 @@ test('on a phone the bar offers Get it (to Get started, where the macOS download
 });
 
 test('one section per step, in order: a step label, a title, two lines of copy, and its demo with the exchange', () => {
-  const names = ['Ask', 'Edit by hand', 'Brand', 'Generate', 'Formats', 'Languages', 'Subtitles', 'Identity', 'Export'];
+  const names = ['Ask', 'Edit by hand', 'Brand', 'Generate', 'Formats', 'Languages', 'Subtitles', 'Export'];
   steps.forEach((body, i) => {
     assert.match(body, new RegExp(`^<section class="step" id="step-${STEPS[i]}" aria-labelledby="${STEPS[i]}-title" data-scene="${STEPS[i]}">`));
     const title = /<h2 class="step__title" id="[\w-]+"><span class="step__n">(\d\d) · ([^<]+)<\/span> ([^<]+)<\/h2>/.exec(body);
@@ -75,7 +75,7 @@ test('one section per step, in order: a step label, a title, two lines of copy, 
 
 test('the chat is drawn, never an input: no field, no caret, no send button', () => {
   const chats = [...story.matchAll(/<div class="chat"[\s\S]*?<\/div>/g)].map((m) => m[0]);
-  assert.equal(chats.length, 10);
+  assert.equal(chats.length, 9);
   for (const c of chats) assert.doesNotMatch(c, /<(input|textarea|button|form)\b|contenteditable|tabindex/);
   assert.doesNotMatch(html, /chat__composer|chat__caret|chat__field|chat__send|⌘↵|Describe what to change/);
   assert.doesNotMatch(html, /<textarea|contenteditable/);
@@ -122,7 +122,7 @@ test('the chat is labelled once as a demo', () => {
 
 test('every composition figure has a poster with alt and size, of a composition that exists, from its poster time', () => {
   const figures = [...html.matchAll(/<figure class="comp[^"]*"[^>]*>([\s\S]*?)<\/figure>/g)];
-  assert.equal(figures.length, 27, '14 in the story, the final cut and 12 in the gallery');
+  assert.equal(figures.length, 28, '15 in the story, the final cut and 12 in the gallery');
   for (const [whole, inner] of figures) {
     const id = attr(whole, 'data-composition');
     assert.ok(existsSync(join(SITE, 'compositions', id, 'composition.json')), id);
@@ -147,7 +147,7 @@ test('every poster offers its half-size file, which a phone takes; a wide screen
 
 test('the story\'s boards loop from a time inside their composition, past the typed brief', () => {
   const tags = [...story.matchAll(/<figure\b[^>]*>/g)].map((m) => m[0]).filter((t) => attr(t, 'data-composition').startsWith('story-'));
-  assert.equal(tags.length, 13);
+  assert.equal(tags.length, 15);
   for (const tag of tags) {
     const id = attr(tag, 'data-composition');
     const from = Number(attr(tag, 'data-loop-from'));
@@ -216,7 +216,9 @@ test('install section is faithful to the README', () => {
   for (const file of ['.dmg', '.exe', '.AppImage']) { assert.ok(install.includes(file), file); assert.ok(readme.includes(file), `README ${file}`); }
   assert.match(readme, /signed and notarized/);
   assert.match(install, /signed and notarized/);
-  for (const req of ['Claude Code', 'Git', 'FFmpeg', 'Node.js 22']) assert.ok(install.includes(req), req);
+  // The app checks and guides its own requirements: no Requirements block, no local address to learn.
+  assert.doesNotMatch(install, /Requirements|127\.0\.0\.1/);
+  assert.match(install, new RegExp(`<h3>Desktop app</h3>\\s*<a class="btn btn--primary way__download" href="${LATEST.replace(/[/.]/g, '\\$&')}">[\\s\\S]*?Download for macOS</a>`));
   assert.match(install, /href="guide\.html"/);
 });
 
