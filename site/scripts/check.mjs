@@ -1,10 +1,14 @@
 // Real-browser checks of the built site, served under /motion-studio/ like GitHub Pages:
 // the home at 360, 768, 1440 and 2000 px, with motion on and with prefers-reduced-motion: no horizontal scroll, no console
 // errors or failed requests, every composition either live or on its poster, no player told to play under reduced
-// motion, no poster a near-blank frame, every link with its target or file. The story: with motion, each step comes on
-// screen at its scroll position, only its boards are mounted, and the canvas's players stop once it has scrolled away;
-// under reduced motion every step is a static block (its messages and its result's images loaded). The story's sound
-// button turns the voice-over on and off. The gallery plays at most four boards at once and none under reduced motion. The final cut never starts by itself; its big Play starts it from 0:00 with sound. On iPhone sizes the story fits between the bar and the sheet, the sheet sits on the visible bottom as the toolbar shows and hides (`phoneStory`), and memory comes back after scrolling the whole page twice with at most two live runtimes (`phoneMemory`). Then the guide (guide.html) at 360, 768 and 1440 px.
+// motion, no poster a near-blank frame, every link with its target or file. The hero shows the headline, the download and
+// step 1 playing by itself, with the next section peeking. With motion each step's demo plays by itself while it is on
+// screen and stops when it leaves (`liveSections`); nothing speaks until a Play with sound is clicked, and each of the two
+// controls plays its own sound and stops off screen. Under reduced motion every demo is drawn finished (its messages and
+// pictures loaded). The gallery plays at most four boards at once and none under reduced motion. The final cut never
+// starts by itself; its big Play starts it from 0:00 with sound. On iPhone sizes every demo's boards and panels lie inside
+// its canvas, clear of each other, never a black frame, posters loaded (`phoneSections`), and memory comes back after
+// scrolling the whole page twice with at most two live runtimes (`phoneMemory`). Then the guide at 360, 768 and 1440 px.
 // Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
@@ -16,9 +20,8 @@ import { launchChrome } from './chrome.mjs';
 
 const WIDTHS = [360, 768, 1440];
 const HOME_WIDTHS = [...WIDTHS, 2000];
-/** iPhone 12-15 and 15 Pro viewports; the toolbar's shown state is simulated by a shorter viewport. */
+/** iPhone 12-15 and 15 Pro viewports. */
 const PHONES = [[390, 844], [393, 852]];
-const TOOLBAR = 84;
 /** A poster whose luminance varies less than this (standard deviation, 0-255) is a near-blank frame. */
 export const MIN_POSTER_DEVIATION = 12;
 const wait = (page, ms) => page.eval(`new Promise(r => setTimeout(r, ${ms}))`);
@@ -44,14 +47,14 @@ export async function check({ out } = {}) {
         await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: reduced ? 'reduce' : 'no-preference' }] });
         await page.goto(`${server.url}?debug`);
         await wait(page, 2500);
-        if (!reduced) problems.push(...await liveStory(page));
-        if (!reduced && (width === 1440 || width === 360)) problems.push(...await storyFromAnywhere(page, server));
+        problems.push(...await heroView(page, { reduced, width }));
+        if (!reduced) problems.push(...await liveSections(page));
         await page.eval(`(async () => { const h = document.documentElement.scrollHeight; for (let y = 0; y < h; y += 500) { scrollTo({ top: y, behavior: 'instant' }); await new Promise(r => setTimeout(r, 250)); } })()`);
         await wait(page, 4000);
         const s = await page.eval(`(() => {
           const live = document.documentElement.classList.contains('js-motion');
           const figs = [...document.querySelectorAll('.comp')].filter((f) => f.getClientRects().length > 0);
-          const stage = [...window.__siteDebug.players].filter((p) => p.figure.closest('[data-stage]'));
+          const stage = [...window.__siteDebug.players].filter((p) => p.figure.closest('[data-scene]'));
           return {
             live, scrollWidth: document.documentElement.scrollWidth, innerWidth,
             figures: figs.length,
@@ -61,17 +64,17 @@ export async function check({ out } = {}) {
             timedOut: figs.filter((f) => f.dataset.fail === 'timeout').map((f) => f.dataset.composition),
             blank: figs.filter((f) => f.classList.contains('is-ready') && !f.querySelector('iframe')).length,
             played: window.__siteDebug.commands.filter((c) => c.type === 'play').length,
-            // The live story's canvas fades its own parts in and out; everything else must be readable once scrolled past.
-            hidden: [...document.querySelectorAll('h1, h2, h3, p, .btn, .way')].filter((e) => !(live && e.closest('.story__pin')) && getComputedStyle(e).opacity < 0.5).length,
+            // With motion the demos bring their own pieces in and out; everything else must be readable once scrolled past.
+            hidden: [...document.querySelectorAll('h1, h2, h3, p, .btn, .way')].filter((e) => !(live && e.closest('.demo')) && getComputedStyle(e).opacity < 0.5).length,
             stagePlaying: stage.filter((p) => p.playing).map((p) => p.id),
             finalCut: Boolean(document.querySelector('figure[data-final-cut][data-composition] .player-bar .player-bar__play')),
-            soundButton: !document.querySelector('.story__sound').hidden && document.querySelector('.story__sound').getClientRects().length > 0,
-            steps: [...document.querySelectorAll('.step')].map((st) => ({
-              n: st.dataset.step,
+            soundControls: [...document.querySelectorAll('[data-sound-play]')].filter((b) => !b.hidden && b.getClientRects().length > 0).length,
+            steps: [...document.querySelectorAll('[data-scene]')].map((st) => ({
+              n: st.dataset.scene,
               shown: st.getClientRects().length > 0 && st.offsetHeight > 0 && getComputedStyle(st).visibility !== 'hidden',
-              messages: st.querySelectorAll('.msg').length,
-              images: [...st.querySelectorAll('.step__result img')].map((i) => i.complete && i.naturalWidth > 0),
-              files: st.querySelectorAll('.files li').length,
+              messages: [...st.querySelectorAll('.msg')].filter((m) => getComputedStyle(m).visibility !== 'hidden' && Number(getComputedStyle(m).opacity) > 0.5).length,
+              images: [...st.querySelectorAll('.scene img')].map((i) => i.complete && i.naturalWidth > 0),
+              files: st.querySelectorAll('.export__rows li').length,
             })),
           };
         })()`);
@@ -82,14 +85,14 @@ export async function check({ out } = {}) {
         if (reduced && s.played > 0) problems.push(`${s.played} play commands under reduced motion`);
         if (s.hidden > 0) problems.push(`${s.hidden} text elements still hidden after scrolling`);
         if (s.live === reduced) problems.push(`the story is ${s.live ? 'live' : 'static'} ${reduced ? 'under' : 'without'} reduced motion`);
-        if (s.stagePlaying.length) problems.push(`canvas boards still playing off screen: ${s.stagePlaying.join(', ')}`);
+        if (s.stagePlaying.length) problems.push(`demo boards still playing off screen: ${s.stagePlaying.join(', ')}`);
         if (!s.finalCut) problems.push('the final cut\'s slot or controls are missing');
-        if (s.steps.length !== 11) problems.push(`${s.steps.length} steps, not 11`);
-        if (s.soundButton !== !reduced) problems.push(`the story's sound button is ${s.soundButton ? 'shown' : 'hidden'} ${reduced ? 'under' : 'without'} reduced motion`);
+        if (s.steps.length !== 10) problems.push(`${s.steps.length} demos, not 10`);
+        if (s.soundControls !== 2) problems.push(`${s.soundControls} Play with sound controls, not 2`);
         if (reduced) {
           for (const st of s.steps) {
-            if (!st.shown) problems.push(`step ${st.n} is not shown as a static block`);
-            if (!st.messages) problems.push(`step ${st.n} has no message`);
+            if (!st.shown) problems.push(`step ${st.n} is not shown`);
+            if (!st.messages) problems.push(`step ${st.n} shows no message`);
             if (!st.images.length && !st.files) problems.push(`step ${st.n} has no result`);
             if (st.images.some((ok) => !ok)) problems.push(`step ${st.n}: an image of its result did not load`);
           }
@@ -114,9 +117,8 @@ export async function check({ out } = {}) {
         await page.close();
       }
     }
-    // The story on a phone (iPhone sizes, at 3x): every step's content between the bar and the sheet, the sheet flush with
-    // the bottom of the visible viewport as the toolbar hides and shows, its text never cut mid-line, the sound switch off
-    // the boards; screenshots of every step, the final cut and the gallery.
+    // The demos on a phone (iPhone sizes, at 3x): every demo's content inside its canvas, clear, loaded and never black;
+    // each plays on screen and stops off it; screenshots of every demo, the final cut and the gallery.
     for (const [width, height] of PHONES) {
       const tag = `phone ${width}x${height}`;
       const page = await chrome.newPage();
@@ -125,7 +127,8 @@ export async function check({ out } = {}) {
       await page.send('Emulation.setTouchEmulationEnabled', { enabled: true });
       await page.goto(`${server.url}?debug`);
       await wait(page, 2500);
-      const problems = await phoneStory(page, { width, height, out: width === 390 && out ? out : null });
+      const problems = await phoneSections(page, { out: width === 390 && out ? out : null });
+      problems.push(...await liveSections(page));
       problems.push(...await phoneMemory(page, tag));
       console.log(`${tag}: ${problems.length ? problems.length + ' problem(s)' : 'ok'}`);
       failures.push(...problems.map((p) => `${tag}: ${p}`));
@@ -182,73 +185,100 @@ export async function check({ out } = {}) {
   if (failures.length) throw new Error(failures.join('\n'));
 }
 
+const sceneNames = (page) => page.eval(`[...document.querySelectorAll('[data-scene]')].map((e) => e.dataset.scene)`);
+const toScene = (page, name) => page.eval(`(() => { const d = document.querySelector('[data-scene="${name}"]'); const demo = d.classList.contains('demo') ? d : d.querySelector('.demo'); const r = demo.getBoundingClientRect(); scrollTo({ top: scrollY + r.top + r.height / 2 - innerHeight / 2, behavior: 'instant' }); })()`);
+
 /**
- * The live story, step by step: scrolled to the middle of each step, the story says it is on that step, every board it plays
- * has a runtime mounted (unless the page's budget of live runtimes is full), and the page never holds more runtimes than its budget. With the sound turned on (a real
- * click on the story's button), step 6 says its line and step 9 lets its board speak; turned off, everything is silent.
+ * The first viewport: the headline, the download (on a computer; the bar's Get it on a phone), the final cut's link, step 1
+ * playing by itself (with motion), and the next section peeking under it.
  */
-async function liveStory(page) {
+async function heroView(page, { reduced, width }) {
   const problems = [];
-  const scrollToStep = (n) => page.eval(`(() => { const s = document.querySelector('.story'); scrollTo({ top: s.offsetTop + (s.offsetHeight - innerHeight) * (${n - 0.45} / 11.6), behavior: 'instant' }); })()`);
-  const clickSound = async () => {
-    const [x, y] = await page.eval(`(() => { const r = document.querySelector('.story__sound').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
-    for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 });
-  };
-  const voice = () => page.eval(`(() => { const st = window.__siteDebug.story; const subs = window.__siteDebug.players.find((p) => p.id === 'story-subs'); return { sound: window.__siteDebug.sound.on, line: st.speaking, subsMuted: subs.muted }; })()`);
-  for (let n = 1; n <= 11; n++) {
-    await scrollToStep(n);
-    await wait(page, 1200);
+  await page.eval(`scrollTo({ top: 0, behavior: 'instant' })`);
+  await new Promise((r) => setTimeout(r, 900));
+  const h = await page.eval(`(() => {
+    const on = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.top >= 0 && r.bottom <= innerHeight && getComputedStyle(el).display !== 'none'; };
+    const brief = window.__siteDebug.scenes.find((s) => s.name === 'brief');
+    return {
+      title: on(document.querySelector('h1')),
+      download: on(document.querySelector('.hero__download')), getIt: on(document.querySelector('.topbar__get')),
+      film: on(document.querySelector('.hero a[href="#final-cut"]')),
+      demo: document.querySelector('.demo--hero').getBoundingClientRect().top < innerHeight,
+      next: document.querySelector('#step-ask').getBoundingClientRect().top < innerHeight || document.querySelector('.demo--hero').getBoundingClientRect().bottom > innerHeight,
+      playing: brief?.playing ?? false,
+    };
+  })()`);
+  if (!h.title) problems.push('hero: the headline is not in the first viewport');
+  if (width >= 721 ? !h.download : !h.getIt) problems.push(`hero: no ${width >= 721 ? 'download' : 'Get it'} in the first viewport`);
+  if (!h.film) problems.push('hero: no link to the final cut in the first viewport');
+  if (!h.demo) problems.push('hero: step 1 is not in the first viewport');
+  if (!h.next) problems.push('hero: nothing shows that the page goes on');
+  if (h.playing === reduced) problems.push(`hero: step 1 is ${h.playing ? 'playing' : 'still'} ${reduced ? 'under' : 'without'} reduced motion`);
+  return problems;
+}
+
+/**
+ * Each step's demo, scrolled into view: it plays by itself (its time moves on) while the others are paused, no panel cuts
+ * its content, its boards
+ * that should play have a runtime unless the page's budget is full, and the page never holds more runtimes than its
+ * budget. Nothing speaks by itself. Generate's Play with sound plays its voice-over and stops when it scrolls away;
+ * Subtitles' lets its board speak and a second click silences it.
+ */
+async function liveSections(page) {
+  const problems = [];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (const name of await sceneNames(page)) {
+    await toScene(page, name);
+    await wait(1300);
+    const a = await page.eval(`window.__siteDebug.scenes.find((s) => s.name === '${name}').time`);
+    await wait(700);
     const r = await page.eval(`(() => {
-      const stage = window.__siteDebug.players.filter((p) => p.figure.closest('[data-stage]'));
+      const d = window.__siteDebug;
+      const me = d.scenes.find((s) => s.name === '${name}');
+      const root = document.querySelector('[data-scene="${name}"]');
       return {
-        step: window.__siteDebug.story?.step,
-        frames: document.querySelectorAll('iframe').length, limit: window.__siteDebug.budget.limit,
-        unmounted: stage.filter((p) => p.state.visible && !p.frame && !p.failed).map((p) => p.id),
-        // The page's budget of live runtimes: past it a board waits on its poster.
-        full: window.__siteDebug.budget.live.size >= window.__siteDebug.budget.limit,
+        playing: me.playing, time: me.time,
+        others: d.scenes.filter((s) => s !== me && s.playing).map((s) => s.name)
+          .filter((n) => { const e = document.querySelector('[data-scene="' + n + '"]'); const b = (e.classList.contains('demo') ? e : e.querySelector('.demo')).getBoundingClientRect(); return b.bottom < 0 || b.top > innerHeight; }),
+        frames: document.querySelectorAll('iframe').length, limit: d.budget.limit,
+        unmounted: d.players.filter((p) => root.contains(p.figure) && p.state.visible && !p.frame && !p.failed).map((p) => p.id),
+        full: d.budget.live.size >= d.budget.limit,
+        loud: d.players.filter((p) => !p.muted).map((p) => p.id), audio: d.sounds.audio,
+        cut: [...root.querySelectorAll('.scene > .panel, .scene > .export')].filter((p) => p.scrollHeight > p.clientHeight + 1).map((p) => p.className.split(' ')[1]),
       };
     })()`);
-    if (r.step !== n) problems.push(`scrolled to step ${n}, the story shows step ${r.step}`);
-    if (r.frames > r.limit) problems.push(`step ${n}: ${r.frames} runtimes on the page, over its budget of ${r.limit}`);
-    if (r.unmounted.length && !r.full) problems.push(`step ${n}: boards to play with no runtime: ${r.unmounted.join(', ')}`);
+    if (!r.playing || r.time === a) problems.push(`${name}: on screen, its demo does not play (${r.playing ? 'stuck at ' + r.time.toFixed(2) : 'paused'})`);
+    if (r.others.length) problems.push(`${name}: demos off screen still playing: ${r.others.join(', ')}`);
+    if (r.frames > r.limit) problems.push(`${name}: ${r.frames} runtimes on the page, over its budget of ${r.limit}`);
+    if (r.unmounted.length && !r.full) problems.push(`${name}: boards to play with no runtime: ${r.unmounted.join(', ')}`);
+    if (r.cut.length) problems.push(`${name}: panels cut their content: ${r.cut.join(', ')}`);
+    if (r.loud.length || r.audio) problems.push(`${name}: something speaks by itself: ${JSON.stringify(r)}`);
   }
-  await scrollToStep(6);
-  await wait(page, 1200);
-  await clickSound();
-  await wait(page, 1500);
-  let v = await voice();
-  if (!v.sound) problems.push('the story\'s sound button did not turn the sound on');
-  if (!v.line?.src.endsWith('/vo-06.mp3') || v.line.paused) problems.push(`step 6 with sound: ${JSON.stringify(v.line)}, not its line playing`);
-  await scrollToStep(9);
-  await wait(page, 2500);
-  v = await voice();
-  if (v.subsMuted || v.line) problems.push(`step 9 with sound: the board ${v.subsMuted ? 'is muted' : 'speaks'}, a line ${v.line ? 'plays' : 'is silent'}`);
-  await clickSound();
-  await wait(page, 400);
-  v = await voice();
-  if (v.sound || v.line || !v.subsMuted) problems.push(`sound off: still ${JSON.stringify(v)}`);
-  // With the sound off, a click on the Generate step's music tile still plays it (the click is the viewer's gesture).
-  await scrollToStep(6);
-  await wait(page, 1500);
-  // On a phone the bottom sheet never covers the Generate step's tiles (the camera frames above it, as tall as it is).
-  const covered = await page.eval(`(() => {
-    if (!matchMedia('(max-width: 959px)').matches) return [];
-    const top = document.querySelector('.chat').getBoundingClientRect().top;
-    return [...document.querySelectorAll('[data-board^="gen"] .board__frame')].filter((f) => f.getBoundingClientRect().bottom > top + 1).map((f) => f.closest('[data-board]').dataset.board);
-  })()`);
-  if (covered.length) problems.push(`step 6: the bottom sheet covers ${covered.join(', ')}`);
-  const at = await page.eval(`(() => { const r = document.querySelector('[data-board="genmusic"] [data-play]').getBoundingClientRect(); return r.width ? [r.left + r.width / 2, r.top + r.height / 2] : null; })()`);
-  if (!at) problems.push('step 6: the music tile\'s play button is not on screen');
-  else {
+  const click = async (sel) => {
+    const at = await page.eval(`(() => { const r = document.querySelector('${sel}').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
     for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', clickCount: 1 });
-    await wait(page, 1200);
-    v = await voice();
-    if (!v.line?.src.endsWith('/music.mp3') || v.line.paused) problems.push(`step 6: a click on the music tile plays ${JSON.stringify(v.line)}`);
-    await scrollToStep(8);
-    await wait(page, 1200);
-    v = await voice();
-    if (v.line) problems.push(`the music tile still plays after the step scrolled away: ${JSON.stringify(v.line)}`);
-  }
+  };
+  const sound = () => page.eval(`(() => { const d = window.__siteDebug; const subs = d.players.find((p) => p.id === 'story-subs'); return { playing: d.sounds.playing, audio: d.sounds.audio, subsMuted: subs.muted, held: !d.scenes.find((s) => s.name === 'generate').playing }; })()`);
+  await toScene(page, 'generate');
+  await wait(1000);
+  await click('[data-sound-play="generate"]');
+  await wait(1500);
+  let v = await sound();
+  if (v.playing !== 'generate' || !v.audio?.src.endsWith('/vo-06.mp3') || v.audio.paused) problems.push(`Generate's Play with sound: ${JSON.stringify(v)}, not its voice-over playing`);
+  await toScene(page, 'languages');
+  await wait(1200);
+  v = await sound();
+  if (v.playing || v.audio) problems.push(`Generate's sound still plays after it scrolled away: ${JSON.stringify(v)}`);
+  await toScene(page, 'subtitles');
+  await wait(1200);
+  await click('[data-sound-play="subtitles"]');
+  await wait(2000);
+  v = await sound();
+  if (v.playing !== 'subtitles' || v.subsMuted) problems.push(`Subtitles' Play with sound: ${JSON.stringify(v)}, not its board speaking`);
+  await click('[data-sound-play="subtitles"]');
+  await wait(500);
+  v = await sound();
+  if (v.playing || !v.subsMuted) problems.push(`Subtitles' sound after a second click: ${JSON.stringify(v)}`);
   return problems;
 }
 
@@ -355,139 +385,76 @@ export async function storyFromAnywhere(page, server) {
 }
 
 /**
- * The live story on a phone, step by step (at rest on each step, then with the toolbar shown and hidden again): the sheet's
- * bottom is the visible viewport's; every board, panel and dialog the step shows lies between the bar and the sheet; the
- * sheet clips nothing, and its clamped text ends on a whole line; the sound switch is in the bar, over no board. With
- * `out`, a screenshot of each step (iphone-step-NN.png), of the final cut and of the gallery.
+ * Every demo on a phone, at its finished state and on arrival: the boards, panels and dialogs it shows lie inside its
+ * canvas and clear of each other (a board with its label), no panel cuts its content, its pictures are loaded, no board is a black frame (sampled from
+ * a screenshot), the chat's text is never cut, and there is no sideways scroll. With `out`, a screenshot of each demo
+ * (iphone-<step>.png), of the final cut and of the gallery.
  */
-export async function phoneStory(page, { width, height, out }) {
+export async function phoneSections(page, { out }) {
   const problems = [];
-  const toStep = (n) => page.eval(`(() => { const s = document.querySelector('.story'); scrollTo({ top: s.offsetTop + (s.offsetHeight - innerHeight) * (${n - 0.45} / 11.6), behavior: 'instant' }); })()`);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const shot = async (name) => { const { data } = await page.send('Page.captureScreenshot', { format: 'png' }); writeFileSync(join(out, name), Buffer.from(data, 'base64')); };
-  const measure = () => page.eval(`(() => {
-    const out = [];
-    const vv = visualViewport;
-    const sheet = document.querySelector('.chat').getBoundingClientRect();
-    const bar = document.querySelector('.topbar').getBoundingClientRect();
-    if (Math.abs(sheet.bottom - (vv.offsetTop + vv.height)) > 1) out.push('the sheet ends at ' + Math.round(sheet.bottom) + ', the visible viewport at ' + Math.round(vv.offsetTop + vv.height));
-    const shown = (el) => { for (let e = el; e && e !== document.body; e = e.parentElement) { const cs = getComputedStyle(e); if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.5) return false; const f = /opacity\\(([\\d.]+)\\)/.exec(e.style.filter); if (f && Number(f[1]) < 0.5) return false; } return el.getClientRects().length > 0; };
-    // What the step shows: on screen (a board scrolled right off the canvas is not part of it), not faded out.
-    const content = [...document.querySelectorAll('.world > .board, .world > .panel, [data-stage] .export')].filter(shown)
-      .filter((el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; });
-    const boxes = [];
-    for (const el of content) {
-      const r = el.getBoundingClientRect();
-      const label = el.querySelector(':scope > .board__label');
-      const top = label && shown(label) ? Math.min(r.top, label.getBoundingClientRect().top) : r.top;
-      const name = el.dataset.board ?? el.className.split(' ').slice(-1)[0];
-      boxes.push(r);
-      if (top < bar.bottom - 1 || r.bottom > sheet.top + 1 || r.left < -1 || r.right > innerWidth + 1) out.push(name + ' is cut (' + [r.left, top, r.right, r.bottom].map(Math.round).join(', ') + '; room ' + Math.round(bar.bottom) + '-' + Math.round(sheet.top) + ')');
-    }
-    for (const el of [document.querySelector('.chat'), document.querySelector('.chat__log')]) if (el.scrollHeight > el.clientHeight + 1) out.push('the sheet clips its content (' + el.className + ': ' + el.scrollHeight + ' > ' + el.clientHeight + ')');
-    // A clamped text (its content taller than its box) shows whole lines only, with no padding under them for the next
-    // line to peek into.
-    for (const el of document.querySelectorAll('.chat .ex.is-current .msg, .chat .ex.is-current .msg *')) {
-      if (!shown(el) || el.scrollHeight <= el.clientHeight + 1) continue;
-      const cs = getComputedStyle(el); const lh = parseFloat(cs.lineHeight); const inner = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-      const lines = inner / lh;
-      if (Math.abs(lines - Math.round(lines)) > 0.05 || parseFloat(cs.paddingBottom) > 0) out.push('the sheet cuts a line of "' + el.textContent.slice(0, 30) + '…"');
-    }
-    const snd = document.querySelector('.story__sound');
-    if (!snd.closest('.topbar')) out.push('the sound switch is not in the bar');
-    const s = snd.getBoundingClientRect();
-    if (!s.width) out.push('the sound switch is not shown');
-    for (const r of boxes) if (s.left < r.right && s.right > r.left && s.top < r.bottom && s.bottom > r.top) out.push('the sound switch covers a board');
-    for (const sel of ['.topbar__brand', '.topbar__get']) { const r = document.querySelector(sel)?.getBoundingClientRect(); if (!r?.width || (s.left < r.right && s.right > r.left)) out.push('the sound switch and ' + sel + ' overlap, or ' + sel + ' is missing'); }
-    if (getComputedStyle(document.querySelector('.topbar__download')).display !== 'none') out.push('the bar still offers the macOS download');
-    if (document.documentElement.scrollWidth > innerWidth) out.push('horizontal scroll');
-    return out;
-  })()`);
-  const metrics = (h) => page.send('Emulation.setDeviceMetricsOverride', { width, height: h, deviceScaleFactor: 3, mobile: true });
-  // At rest on each step, and again late in it (step 11: once the export dialog has closed on the whole canvas).
-  const stops = [...Array.from({ length: 11 }, (_, i) => i + 1), 11.4];
-  for (const n of stops) {
-    await toStep(n);
-    // Just arrived, then settled: the step's boards are never a black frame, its end state is reached, and nothing of
-    // another step is drawn over its content.
-    await wait(page, 400);
-    for (const p of await stepContent(page, n, { settled: false })) problems.push(`step ${n}, on arrival: ${p}`);
-    await wait(page, 1100);
-    for (const p of await measure()) problems.push(`step ${n}: ${p}`);
-    for (const p of await stepContent(page, n)) problems.push(`step ${n}: ${p}`);
-    if (out && Number.isInteger(n)) await shot(`iphone-step-${String(n).padStart(2, '0')}.png`);
-  }
-  // And back up, step by step: the transitions the other way leave no earlier board over the new step.
-  for (let n = 10; n >= 1; n--) {
-    await toStep(n);
-    await wait(page, 1200);
-    for (const p of await stepContent(page, n)) problems.push(`step ${n}, scrolled back: ${p}`);
-  }
-  // The toolbar shows (a shorter visible viewport), then hides again: the sheet follows the bottom each time. (Emulation
-  // shrinks svh with the viewport, and the story's length with it: the step is found again at each height; on a phone svh
-  // stays put.)
-  for (const n of [4, 11]) {
-    for (const h of [height - TOOLBAR, height]) {
-      await metrics(h);
-      await toStep(n);
-      await wait(page, 1200);
-      for (const p of await measure()) problems.push(`step ${n} at ${h} px: ${p}`);
-    }
+  for (const name of await sceneNames(page)) {
+    await toScene(page, name);
+    await wait(500);
+    for (const p of await demoContent(page, name, { settled: false })) problems.push(`${name}, on arrival: ${p}`);
+    // Its finished state (the hold before it starts again).
+    await page.eval(`(() => { const s = window.__siteDebug.scenes.find((x) => x.name === '${name}'); s.timeline.time(s.actEnd + 0.3); })()`);
+    await wait(1500);
+    for (const p of await demoContent(page, name)) problems.push(`${name}: ${p}`);
+    if (out) await shot(`iphone-${name}.png`);
   }
   if (out) {
     await page.eval(`scrollTo({ top: document.querySelector('#final-cut').offsetTop - 60, behavior: 'instant' })`);
-    await wait(page, 2500);
+    await wait(2500);
     await shot('iphone-final.png');
     await page.eval(`scrollTo({ top: document.querySelector('.gallery').offsetTop - 60, behavior: 'instant' })`);
-    await wait(page, 3000);
+    await wait(3000);
     await shot('iphone-gallery.png');
   }
   return problems;
 }
 
-/**
- * The story's canvas on a phone at step `n`: what is drawn (boards, panels, the export dialog, by their effective opacity)
- * splits into the step's content (half opaque or more) and faded leftovers; no two pieces of content overlap and no
- * leftover lies over the content; board C wears the step's version (not "Rendering…"); and every board of the content shows
- * a picture, never a near-uniform black frame (sampled from a screenshot).
- */
-export async function stepContent(page, n, { settled = true } = {}) {
+/** One demo's content on screen: see `phoneSections`. */
+export async function demoContent(page, name, { settled = true } = {}) {
   const s = await page.eval(`(() => {
+    const root = document.querySelector('[data-scene="${name}"]');
+    const demo = root.classList.contains('demo') ? root : root.querySelector('.demo');
+    const canvas = demo.querySelector('.demo__canvas').getBoundingClientRect();
     const alpha = (el) => {
       let a = 1;
       for (let e = el; e && e !== document.body; e = e.parentElement) {
         const cs = getComputedStyle(e);
         if (cs.display === 'none' || cs.visibility === 'hidden') return 0;
         a *= Number(cs.opacity);
-        const f = /opacity\\(([\\d.]+)\\)/.exec(e.style.filter); if (f) a *= Number(f[1]);
       }
       return el.getClientRects().length ? a : 0;
     };
-    const room = { top: document.querySelector('.topbar').getBoundingClientRect().bottom, bottom: document.querySelector('.chat').getBoundingClientRect().top };
-    const els = [...document.querySelectorAll('.world > .board, .world > .panel, [data-stage] .export')]
-      .map((el) => ({ el, name: el.dataset.board ?? el.className.split(' ').at(-1), a: alpha(el), r: el.getBoundingClientRect() }))
-      .filter((e) => e.a > 0.05 && e.r.bottom > room.top && e.r.top < room.bottom);
-    const content = els.filter((e) => e.a >= 0.5); const faded = els.filter((e) => e.a < 0.5);
-    const hit = (p, q) => p.r.left < q.r.right - 1 && p.r.right > q.r.left + 1 && p.r.top < q.r.bottom - 1 && p.r.bottom > q.r.top + 1;
     const out = [];
-    content.forEach((p, i) => content.slice(i + 1).forEach((q) => { if (hit(p, q)) out.push(p.name + ' and ' + q.name + ' are drawn over each other'); }));
-    for (const f of faded) for (const c of content) if (hit(f, c)) out.push(f.name + ' (another step\\'s, ' + f.a.toFixed(2) + ') lies over ' + c.name);
-    // Every poster laid out on the canvas is loaded (a version waits for its wipe under a clip-path that hides it all:
-    // left lazy, WebKit loads it only as the wipe reveals it, a black frame until then).
-    if (${settled}) for (const img of document.querySelectorAll('.world img.poster')) if (img.closest('[hidden]') === null && !(img.complete && img.naturalWidth > 0)) out.push('the poster of ' + img.closest('figure').dataset.composition + ' is laid out but not loaded');
-    const label = document.querySelector('[data-board="c"] .board__ver');
-    const want = label.dataset.versions.split(' ').map((x) => x.split(':')).filter(([k]) => Number(k) <= ${Math.floor(n)}).at(-1)[1];
-    if (label.textContent !== want) out.push('board C says "' + label.textContent + '", not ' + want);
-    const frames = content.map((e) => [e.name, e.el.querySelector(':scope > .board__frame')?.getBoundingClientRect()]).filter(([, r]) => r)
-      .map(([name, r]) => ({ name, x: Math.max(0, r.left), y: Math.max(room.top, r.top), w: Math.min(innerWidth, r.right) - Math.max(0, r.left), h: Math.min(room.bottom, r.bottom) - Math.max(room.top, r.top) }))
+    const items = [...demo.querySelectorAll('.scene > .at')].map((el) => {
+      const r = el.getBoundingClientRect(); const label = el.querySelector(':scope > .board__label');
+      const top = label ? Math.min(r.top, label.getBoundingClientRect().top) : r.top;
+      return { el, name: el.dataset.board ?? el.className.split(' ')[1], a: alpha(el), r: { left: r.left, right: r.right, top, bottom: r.bottom } };
+    }).filter((e) => e.a >= 0.5);
+    const hit = (p, q) => p.r.left < q.r.right - 1 && p.r.right > q.r.left + 1 && p.r.top < q.r.bottom - 1 && p.r.bottom > q.r.top + 1;
+    items.forEach((p, i) => items.slice(i + 1).forEach((q) => { if (${settled} && hit(p, q)) out.push(p.name + ' and ' + q.name + ' are drawn over each other'); }));
+    for (const e of items) if (e.r.left < canvas.left - 1 || e.r.right > canvas.right + 1 || e.r.top < canvas.top - 1 || e.r.bottom > canvas.bottom + 1) out.push(e.name + ' leaves its canvas');
+    if (${settled}) for (const img of demo.querySelectorAll('.scene img')) if (!(img.complete && img.naturalWidth > 0)) out.push('a picture is not loaded: ' + img.getAttribute('src'));
+    for (const m of demo.querySelectorAll('.chat .msg')) if (m.scrollWidth > m.clientWidth + 1) out.push('the chat cuts "' + m.textContent.slice(0, 30) + '…"');
+    // A panel never cuts its own content.
+    for (const p of demo.querySelectorAll('.scene > .panel, .scene > .export')) if (alpha(p) >= 0.5 && p.scrollHeight > p.clientHeight + 1) out.push(p.className.split(' ')[1] + ' cuts its content (' + p.scrollHeight + ' > ' + p.clientHeight + ')');
+    if (document.documentElement.scrollWidth > innerWidth) out.push('horizontal scroll');
+    const frames = items.map((e) => [e.name, e.el.querySelector(':scope > .board__frame')?.getBoundingClientRect()]).filter(([, r]) => r)
+      .map(([n, r]) => ({ name: n, x: Math.max(0, r.left), y: Math.max(0, r.top), w: Math.min(innerWidth, r.right) - Math.max(0, r.left), h: Math.min(innerHeight, r.bottom) - Math.max(0, r.top) }))
       .filter((f) => f.w > 8 && f.h > 8);
     return { out, frames, sx: scrollX, sy: scrollY };
   })()`);
   const problems = [...s.out];
   // A composition may hold an empty frame for a moment (between two scenes): blank means blank three times over 1.6 s.
   let blank = s.frames;
-  let last = {};
+  const last = {};
   for (let i = 0; i < 3 && blank.length; i++) {
-    if (i) await wait(page, 800);
+    if (i) await new Promise((r) => setTimeout(r, 800));
     const still = [];
     for (const f of blank) {
       const { data } = await page.send('Page.captureScreenshot', { format: 'png', clip: { x: f.x + s.sx, y: f.y + s.sy, width: f.w, height: f.h, scale: 0.25 } });
