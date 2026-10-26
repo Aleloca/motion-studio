@@ -676,6 +676,12 @@ arrives and worked on later together.
     most two live runtimes on a phone (four on a computer), unloaded off screen, half-size posters, the final cut
     mounted on Play; posters load a step ahead and stay until the runtime moves; each step shows only its own boards.
     check.mjs covers phone memory and every step down and up. Verified by the user on the iPhone (Chrome and Safari).
+90. **The home as classic sections (user tests of 2026-10-26).** Testers typed into the chat panel and missed or
+    rushed the scroll story. Then, from the local preview: formats' 16:9 not the chosen variant and still, "Ten
+    languages", drop the identity step, a Download button in Get started, no Requirements, no 127.0.0.1:4317 line.
+    Done (decisions 1925-1940): hero with the brief becoming three variants, then one section per step with a demo that
+    plays on screen and pauses off it, never tied to the scroll; the chat is an illustration; Play with sound on
+    Generate and Subtitles; all the review items. Open: "any language" vs the product's 10-language cap and no RTL.
 - **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
   Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
 - **Product ticket to file:** audio `role: music` ducking is documented but not implemented in core audio-mix.ts and
