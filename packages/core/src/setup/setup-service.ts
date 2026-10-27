@@ -1,9 +1,8 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import type { SetupStatus, SetupTaskState } from '@motion-studio/shared';
 import type { CommandExec } from '../exec.ts';
-import { killGroup } from '../render/watchdog.ts';
 import { t } from '../i18n.ts';
 import { ffmpegBuildSize, installFfmpeg, type FfmpegBuild } from './ffmpeg-download.ts';
+import { killTaskProcess, startTaskProcess, type ChildProcess, type SpawnFn } from './task-process.ts';
 
 /**
  * User report 91: the setup's one-click tasks for a non-technical user. Each runs only from an explicit click that went
@@ -72,7 +71,7 @@ export interface SetupServiceOptions {
   installerCommand?: string[];
   exec: CommandExec;
   /** Spawns a task's process (test seam; default node's `spawn`). */
-  spawnImpl?: typeof spawn;
+  spawnImpl?: SpawnFn;
   configDir: string;
   /** The FFmpeg build for this computer (null: no button). */
   ffmpegBuild: FfmpegBuild | null;
@@ -146,20 +145,8 @@ export class SetupService {
     this.tasks[task] = state;
   }
 
-  /** Starts a process in its own group (killed as a whole), no window on Windows, stdin closed unless asked. */
   private start(cmd: string[], opts: { stdinPipe?: boolean } = {}): ChildProcess {
-    const [bin, ...args] = cmd;
-    return (this.o.spawnImpl ?? spawn)(bin!, args, {
-      stdio: [opts.stdinPipe ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-      detached: this.platform !== 'win32',
-      env: this.o.env ?? process.env,
-    });
-  }
-
-  private static kill(child: ChildProcess): void {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    if (child.pid) killGroup(child.pid); else child.kill('SIGKILL');
+    return startTaskProcess(cmd, { platform: this.platform, env: this.o.env ?? process.env, stdinPipe: opts.stdinPipe, spawnImpl: this.o.spawnImpl });
   }
 
   /** Runs the official Claude Code installer. */
@@ -173,8 +160,8 @@ export class SetupService {
     }
     this.tasks.claudeInstall = { state: 'running' };
     let ended: SetupTaskState | null = null;
-    const timer = setTimeout(() => { ended = { state: 'failed', error: 'timeout' }; SetupService.kill(child); }, this.o.installTimeoutMs ?? 10 * 60_000);
-    this.running.set('claudeInstall', { cancel: () => { ended ??= { state: 'cancelled' }; SetupService.kill(child); } });
+    const timer = setTimeout(() => { ended = { state: 'failed', error: 'timeout' }; killTaskProcess(child); }, this.o.installTimeoutMs ?? 10 * 60_000);
+    this.running.set('claudeInstall', { cancel: () => { ended ??= { state: 'cancelled' }; killTaskProcess(child); } });
     child.stdout?.resume();
     child.stderr?.on('data', (d: Buffer) => { console.warn(`Motion Studio: Claude Code installer: ${d.toString('utf8').trim().slice(0, 500)}`); });
     let settled = false;
@@ -221,7 +208,7 @@ export class SetupService {
     child.once('close', () => { exited = true; });
     const deadline = Date.now() + (this.o.loginTimeoutMs ?? 5 * 60_000);
     const pollMs = this.o.loginPollMs ?? 2000;
-    this.running.set('claudeLogin', { cancel: () => { ended ??= { state: 'cancelled' }; SetupService.kill(child); } });
+    this.running.set('claudeLogin', { cancel: () => { ended ??= { state: 'cancelled' }; killTaskProcess(child); } });
     void (async () => {
       for (;;) {
         await new Promise((r) => setTimeout(r, pollMs));
@@ -235,7 +222,7 @@ export class SetupService {
         }
         if (Date.now() >= deadline) { ended = { state: 'failed', error: 'timeout' }; break; }
       }
-      SetupService.kill(child);
+      killTaskProcess(child);
       await this.finish('claudeLogin', ended);
     })();
     return { ...this.tasks.claudeLogin };

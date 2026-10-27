@@ -32,6 +32,8 @@ const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^
 const COMMAND = /(['"`])((?:[^'"`\s]*[\\/])?ff(?:mpeg|probe)(?:\.exe)?)\1/gi;
 const ALLOWED_BEFORE = /(\bwhich\s*\(\s*|\bexecFfVia\s*\(\s*\w+\s*,\s*|\bid:\s*|\blabel:\s*)$/;
 const NAME_LISTS = new Set([join('approvals', 'permissions-store.ts')]);
+/** Modules that name the binaries only as files and folders of the setup's download, never as a command (report 91). */
+const FILE_NAMES = new Set([join('setup', 'ffmpeg-download.ts'), join('setup', 'tool-path.ts')]);
 /** The scan's findings for one module (`src`: its code without comments); empty when it never starts ffmpeg itself. */
 function scanSource(rel: string, src: string): string[] {
   const out: string[] = [];
@@ -43,7 +45,7 @@ function scanSource(rel: string, src: string): string[] {
   if (/\bimport\s*\(\s*(?:[^'"\s)]|['"](node:)?child_process)/.test(src)) out.push(`${rel}: dynamic import of child_process or of a computed module`);
   if (/\bcreateRequire\b|\bprocess\.binding\b|\brequire\s*\(\s*[^'"\s)]/.test(src)) out.push(`${rel}: createRequire, process.binding or a computed require`);
   // The binary named as a command (a literal), except the allowed places.
-  if (!NAME_LISTS.has(rel)) {
+  if (!NAME_LISTS.has(rel) && !FILE_NAMES.has(rel)) {
     for (const m of src.matchAll(COMMAND)) if (!ALLOWED_BEFORE.test(src.slice(Math.max(0, m.index! - 60), m.index!))) out.push(`${rel}: names ${m[2]} as a command`);
   }
   // Or built from pieces.
