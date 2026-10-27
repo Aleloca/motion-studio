@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/Aleloca/motion-studio/discussions
+    about: Ask how something works or share an idea in Discussions.
+  - name: User guide
+    url: https://aleloca.github.io/motion-studio/guide.html
+    about: Every feature, step by step. Check it before opening an issue.
+  - name: Security vulnerability
+    url: https://github.com/Aleloca/motion-studio/security/advisories/new
+    about: Report security problems privately, never in a public issue.
