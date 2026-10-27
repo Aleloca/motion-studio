@@ -72,9 +72,9 @@ The address printed at startup contains an access code (`#t=…`): open Motion S
 Only one Motion Studio runs per configuration folder: if one is already running (from the terminal or as the desktop app), `motion-studio` prints `Motion Studio is already running: <address>`, opens it in the browser (unless `--no-open`) and exits, and the desktop app opens that address instead of starting another (if that Motion Studio quits, the app offers to restart).
 
 ## Requirements
-- [Claude Code](https://docs.claude.com/claude-code) installed and signed in (`claude auth login`)
+- [Claude Code](https://code.claude.com/docs/en/setup) installed and signed in (`claude auth login`), with a paid Claude plan (Pro, Max, Team or Enterprise) or a Claude Console account: the free plan does not include Claude Code, and the Claude desktop app alone is not enough. If Claude Code is missing, the first-run setup offers **Install Claude Code** (Anthropic's official installer from claude.ai, for your user only, no administrator rights, only after you confirm) and then **Sign in to Claude**; the manual command is shown too.
 - Git
-- FFmpeg (needed to render compositions into videos; stills need none; older creatives without it are shown as "unverified")
+- FFmpeg: needed to export videos; images work without it (older creatives without it are shown as "unverified"). The setup's **Install FFmpeg** downloads a pinned static build into Motion Studio's data folder, checked against its SHA-256, only after you confirm: on Windows the "release essentials" build of gyan.dev (GPLv3), on macOS and Linux the release build of ffmpeg.martin-riedl.de (GPL, it includes x264 and x265). Nothing else on the computer changes.
 - For the CLI (`npx`) only: Google Chrome or Chromium, which renders the compositions. Without it, **Settings → System check** offers to download Chrome for Testing into Motion Studio's data folder, only after showing its size and with your consent. The desktop app renders with its own Chromium.
 - Node.js 22+ for `npx` and the sources (not needed for the desktop app)
 

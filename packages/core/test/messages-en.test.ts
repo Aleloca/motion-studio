@@ -34,9 +34,10 @@ describe('English messages', () => {
   });
   it('words Doctor checks and their fixes in English', async () => {
     const exec: CommandExec = async () => ({ code: -1, stdout: '', stderr: 'ENOENT', notFound: true });
-    const checks = await runDoctor({ exec, claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
+    const checks = await runDoctor({ exec, claudeCommand: ['claude'], nodeVersion: 'v24.9.0', platform: 'linux' });
     const byId = Object.fromEntries(checks.map((c) => [c.id, c]));
-    expect(byId.git).toMatchObject({ message: 'Git not found', fix: 'Install Git from https://git-scm.com' });
+    expect(byId.git).toMatchObject({ message: 'Git not found', fix: "Install Git with your system's package manager (for example: sudo apt install git), then press Check again." });
+    expect(byId.ffmpeg).toMatchObject({ message: 'Needed to export videos; images work without it.' });
     expect(byId['claude-auth']).toMatchObject({ label: 'Claude sign-in', message: 'Install Claude Code first' });
   });
   it('titles an approval for a file outside the project in English, keeping the stable kind', async () => {

@@ -121,3 +121,23 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
     frame: (video, out, atSec, opts) => grab(video, out, atSec, opts),
   };
 }
+
+/**
+ * User report 91: the media tools of a running app that may get FFmpeg later (the setup's Install FFmpeg). `tools` always
+ * delegates to the current set; `refresh()` looks for ffprobe again when none was found (after an install).
+ */
+export function reloadableMediaTools(initial: MediaTools, create: () => Promise<MediaTools> = () => createFfmpegTools()): { tools: MediaTools; refresh(): Promise<void> } {
+  let current = initial;
+  const tools: MediaTools = {
+    get available() { return current.available; },
+    probe: (file) => current.probe(file),
+    probeAudio: async (file) => (current.probeAudio ? current.probeAudio(file) : null),
+    decodePcm: async (file, out, o) => (current.decodePcm ? current.decodePcm(file, out, o) : false),
+    poster: (video, out, atSec) => current.poster(video, out, atSec),
+    frame: (video, out, atSec, opts) => current.frame(video, out, atSec, opts),
+  };
+  return {
+    tools,
+    async refresh() { if (!current.available) current = await create().catch(() => current); },
+  };
+}

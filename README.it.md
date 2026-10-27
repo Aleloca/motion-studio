@@ -72,9 +72,9 @@ L'indirizzo stampato all'avvio contiene un codice di accesso (`#t=…`): apri Mo
 Per ogni cartella di configurazione gira un solo Motion Studio: se è già avviato (dal terminale o come app desktop), `motion-studio` stampa `Motion Studio è già avviato: <indirizzo>`, lo apre nel browser (salvo `--no-open`) e termina, e l'app desktop apre quell'indirizzo invece di avviarne un altro (se quel Motion Studio si chiude, l'app propone di riavviarsi).
 
 ## Requisiti
-- [Claude Code](https://docs.claude.com/claude-code) installato e autenticato (`claude auth login`)
+- [Claude Code](https://code.claude.com/docs/en/setup) installato e autenticato (`claude auth login`), con un piano Claude a pagamento (Pro, Max, Team o Enterprise) o un account Claude Console: il piano gratuito non include Claude Code, e la sola app desktop di Claude non basta. Se Claude Code manca, la configurazione iniziale propone **Installa Claude Code** (il programma di installazione ufficiale di Anthropic da claude.ai, solo per il tuo utente, senza permessi di amministratore, solo dopo la tua conferma) e poi **Accedi a Claude**; il comando da usare a mano è mostrato comunque.
 - Git
-- FFmpeg (serve per renderizzare le composizioni in video; le immagini fisse non ne hanno bisogno; senza, le creatività vecchie risultano "non verificate")
+- FFmpeg: serve per esportare i video; le immagini funzionano anche senza (senza, le creatività vecchie risultano "non verificate"). **Installa FFmpeg** della configurazione scarica una build statica fissata nella cartella dati di Motion Studio, verificata con il suo SHA-256, solo dopo la tua conferma: su Windows la build "release essentials" di gyan.dev (GPLv3), su macOS e Linux la build di release di ffmpeg.martin-riedl.de (GPL, include x264 e x265). Nient'altro cambia sul computer.
 - Solo per la CLI (`npx`): Google Chrome o Chromium, che renderizza le composizioni. Se manca, **Impostazioni → System check** propone di scaricare Chrome for Testing nella cartella dati di Motion Studio, solo dopo averne mostrato la dimensione e con il tuo consenso. L'app desktop renderizza con il proprio Chromium.
 - Node.js 22+ per `npx` e per i sorgenti (non serve per l'app desktop)
 

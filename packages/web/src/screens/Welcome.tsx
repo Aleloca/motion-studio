@@ -10,6 +10,7 @@ import { href, type WelcomeStep } from '../routes.ts';
 import { Button, Icon, Input, Pill, Select, Spinner, cx, toast } from '../ui/index.ts';
 import './welcome.css';
 import { message } from './common.tsx';
+import { SetupAction, useSetupStatus } from '../components/SetupAction.tsx';
 
 /** The folders inside every project (core `PROJECT_DIRS`): what the preview shows under each project. */
 const PROJECT_DIRS = 'brand, assets, references, creatives';
@@ -252,21 +253,33 @@ function CheckStep({ checks, checking, checksRun, loadError, onRecheck, blocking
         </Footer>
       )}
     >
-      <SystemChecks checks={checks} checking={Boolean(checking)} run={checksRun ?? 0} revealedRun={revealedRun} loadError={loadError ?? null} onRecheck={onRecheck} />
+      <SystemChecks checks={checks} checking={Boolean(checking)} run={checksRun ?? 0} revealedRun={revealedRun} loadError={loadError ?? null} onRecheck={onRecheck} split />
     </Panel>
   );
 }
 
+const SETUP_ORDER: readonly string[] = ['claude', 'claude-auth', 'git', 'ffmpeg'];
+const setupOrder = (c: DoctorCheck) => { const i = SETUP_ORDER.indexOf(c.id); return i === -1 ? SETUP_ORDER.length : i; };
+
+/** User report 91: whether a row belongs under "Technical details" in the first-run setup (a blocking failure never does). */
+export const isTechnical = (c: DoctorCheck) => Boolean(c.technical) && !(c.required && !c.ok);
+
 /**
  * The doctor checks, revealed one by one once per doctor run (`run`); new texts for the same run (a language switch)
  * or coming back to step 1 show them at once. While `checking`, every row waits again. Failures show their remedy
- * with "Check again".
+ * with "Check again". `split` (the first-run setup, user report 91): only what is needed to start is listed; the technical
+ * rows wait under a collapsed "Technical details".
  */
-export function SystemChecks({ checks, checking, run, revealedRun, loadError, onRecheck }: {
+export function SystemChecks({ checks: all, checking, run, revealedRun, loadError, onRecheck, split = false }: {
   checks: DoctorCheck[] | null; checking: boolean; run: number; revealedRun: { current: number | null }; loadError: string | null; onRecheck(): void;
+  split?: boolean;
 }) {
   const t = useT();
   const w = t.web.welcome;
+  // Claude Code first: without it nothing works; then the other tools (user report 91).
+  const checks = all && split ? all.filter((c) => !isTechnical(c)).sort((a, b) => setupOrder(a) - setupOrder(b)) : all;
+  const technical = all && split ? all.filter(isTechnical) : [];
+  const setup = useSetupStatus(Boolean(all?.some((c) => c.action)), onRecheck);
   const [revealed, setRevealed] = useState(() => (revealedRun.current === run ? Infinity : 0));
   const count = checks?.length ?? 0;
   const ready = checks !== null && !checking;
@@ -300,55 +313,84 @@ export function SystemChecks({ checks, checking, run, revealedRun, loadError, on
       </ul>
     );
   }
+  const done = visible >= checks.length;
+  // The plain-words requirement, under the Claude Code rows while one of them is not ready (user report 91).
+  const claudeNotReady = checks.some((c) => (c.id === 'claude' || c.id === 'claude-auth') && !c.ok);
+  const lastClaude = Math.max(checks.findIndex((c) => c.id === 'claude'), checks.findIndex((c) => c.id === 'claude-auth'));
   return (
-    <ul className="ms-syschecks" aria-label={w.checksList} aria-busy={visible < checks.length || undefined}>
-      {checks.map((c, i) => (i < visible ? <CheckRow key={c.id} check={c} onRecheck={onRecheck} /> : (
-        <li key={c.id} className="ms-syscheck">
-          <Spinner decorative size={16} />
-          <span className="ms-syscheck-label ms-muted">{c.label}</span>
-          <span className="ms-syscheck-value">{w.checkingRow}</span>
-        </li>
-      )))}
-    </ul>
+    <>
+      <ul className="ms-syschecks" aria-label={w.checksList} aria-busy={!done || undefined}>
+        {checks.map((c, i) => (i < visible ? (
+          <CheckRow key={c.id} check={c} onRecheck={onRecheck} setup={setup}
+            after={claudeNotReady && i === lastClaude ? <li className="ms-setup-plan"><Icon name="user" size={13} /><span>{w.planNote}</span></li> : null} />
+        ) : (
+          <li key={c.id} className="ms-syscheck">
+            <Spinner decorative size={16} />
+            <span className="ms-syscheck-label ms-muted">{c.label}</span>
+            <span className="ms-syscheck-value">{w.checkingRow}</span>
+          </li>
+        )))}
+      </ul>
+      {done && technical.length > 0 ? (
+        <details className="ms-tech">
+          <summary>{w.technicalDetails}<span className="ms-faint"> · {technical.length}</span></summary>
+          <ul className="ms-syschecks" aria-label={w.technicalDetails}>
+            {technical.map((c) => <CheckRow key={c.id} check={c} onRecheck={onRecheck} setup={setup} />)}
+          </ul>
+        </details>
+      ) : null}
+    </>
   );
 }
 
-function CheckRow({ check: c, onRecheck }: { check: DoctorCheck; onRecheck(): void }) {
+function CheckRow({ check: c, onRecheck, setup, after }: { check: DoctorCheck; onRecheck(): void; setup: ReturnType<typeof useSetupStatus>; after?: ReactNode }) {
   const t = useT();
   const w = t.web.welcome;
   const mark = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => { void pop(mark.current); }, []);
   if (c.ok) {
     return (
+      <>
       <li className="ms-syscheck">
         <span ref={mark} className={cx('ms-syscheck-mark', c.info ? 'ms-note' : 'ms-ok')} aria-hidden="true"><Icon name={c.info ? 'minus' : 'check'} size={10} strokeWidth={2.4} /></span>
         <span className="ms-syscheck-label">{c.label}</span>
         <span className="ms-syscheck-value">{c.version ?? c.message}</span>
       </li>
+      {after}
+      </>
     );
   }
+  const action = c.action;
+  // A technical row the user cannot act on: a neutral note with its advice, no "Recommended" and no "Check again".
+  const noteOnly = !c.required && !action && Boolean(c.technical);
   return (
+    <>
     <li className={cx('ms-syscheck', 'ms-fail', c.required && 'ms-required')}>
       <div className="ms-syscheck-line">
         <span ref={mark} className={cx('ms-syscheck-mark', c.required ? 'ms-warn' : 'ms-note')} aria-hidden="true">
           <Icon name={c.required ? 'close' : 'minus'} size={10} strokeWidth={2.4} />
         </span>
         <span className="ms-syscheck-label">{c.label}</span>
-        <Pill tone={c.required ? 'warn' : 'neutral'}>{c.required ? w.missing : w.recommended}</Pill>
+        <Pill tone={c.required ? 'warn' : 'neutral'}>{c.required ? w.missing : noteOnly ? w.note : w.recommended}</Pill>
       </div>
       <p className="ms-syscheck-message">{c.message}</p>
-      {c.fix || c.required ? (
+      {action ? <SetupAction check={{ ...c, action }} setup={setup} onRecheck={onRecheck} />
+      : c.waitsFor ? null
+      : noteOnly ? (c.fix ? <p className="ms-syscheck-message ms-syscheck-advice">{c.fix}</p> : null)
+      : c.fix || c.required ? (
         <div className="ms-remedy">
           {c.fix ? (
             <div className="ms-remedy-text">
               <span className="ms-welcome-cap ms-plain">{w.remedy}</span>
-              <code>{c.fix}</code>
+              <span className="ms-remedy-plain">{c.fix}</span>
             </div>
           ) : <div className="ms-grow" />}
           <Button size="sm" variant="outline" onClick={onRecheck}><Icon name="refresh" size={12} />{w.checkAgain}</Button>
         </div>
       ) : null}
     </li>
+    {after}
+    </>
   );
 }
 

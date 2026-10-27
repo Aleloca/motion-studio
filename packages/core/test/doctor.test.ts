@@ -25,7 +25,7 @@ describe('runDoctor · automatic updates (decision 802)', () => {
   const run = (updatesOff?: boolean) => runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', ...(updatesOff === undefined ? {} : { updatesOff }) });
   it('adds one informational row (ok, not a recommendation) when the updater is off, and it never blocks', async () => {
     const checks = await run(true);
-    expect(checks.find((c) => c.id === 'updates')).toEqual({ id: 'updates', label: t().doctor.updatesLabel, required: false, ok: true, info: true, message: t().doctor.updatesOff });
+    expect(checks.find((c) => c.id === 'updates')).toEqual({ id: 'updates', label: t().doctor.updatesLabel, required: false, ok: true, info: true, message: t().doctor.updatesOff, technical: true });
     expect(hasBlockingFailure(checks)).toBe(false);
   });
   it('has no such row when the updater is on or there is none', async () => {
@@ -48,11 +48,17 @@ describe('runDoctor', () => {
   });
   it('flags missing claude with an install fix and skips the auth probe', async () => {
     const { ['claude --version']: _, ['claude auth status --json']: __, ...rest } = allGood;
-    const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
+    const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', platform: 'darwin' });
     const claude = checks.find((c) => c.id === 'claude')!;
     expect(claude.ok).toBe(false);
-    expect(claude.fix).toContain('npm install -g @anthropic-ai/claude-code');
-    expect(checks.find((c) => c.id === 'claude-auth')).toMatchObject({ ok: false, message: 'Installa prima Claude Code' });
+    // User report 91: the official native installer (never npm), with the one-click install offered.
+    expect(claude.fix).toBe('curl -fsSL https://claude.ai/install.sh | bash');
+    expect(claude.action).toBe('install-claude');
+    // The sign-in row waits: no remedy, no button (no empty box in the UI).
+    const auth = checks.find((c) => c.id === 'claude-auth')!;
+    expect(auth).toMatchObject({ ok: false, message: 'Prima installa Claude Code', waitsFor: 'claude' });
+    expect(auth.fix).toBeUndefined();
+    expect(auth.action).toBeUndefined();
     expect(hasBlockingFailure(checks)).toBe(true);
   });
   it('flags a logged-out claude with the login command', async () => {
@@ -103,25 +109,31 @@ describe('runDoctor', () => {
   });
   it('keeps the install fix when a tool is not found', async () => {
     const { ['git --version']: _, ...rest } = allGood;
-    const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
-    expect(checks.find((c) => c.id === 'git')).toMatchObject({ ok: false, message: 'Git non trovato', fix: 'Installa Git da https://git-scm.com' });
+    const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', platform: 'win32' });
+    // User report 91: plain words and the Git for Windows download page.
+    expect(checks.find((c) => c.id === 'git')).toMatchObject({ ok: false, message: 'Git non trovato', fix: t().doctor.gitFix.windows });
+    expect(checks.find((c) => c.id === 'git')!.fix).toContain('https://git-scm.com/downloads/win');
   });
   it('reports the sandbox as an optional check', async () => {
     const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', sandbox: async () => ({ available: false, reason: 'manca bubblewrap' }) });
     expect(checks.at(-1)).toMatchObject({ id: 'sandbox', ok: false, required: false, message: 'manca bubblewrap' });
   });
   it('reports where PATH came from only when told (desktop)', async () => {
-    const base = { exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' };
+    const base = { exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', platform: 'darwin' as const };
     expect((await runDoctor(base)).some((c) => c.id === 'shell-path')).toBe(false);
     expect((await runDoctor({ ...base, shellPath: { source: 'login-shell' } })).find((c) => c.id === 'shell-path')).toEqual({
-      id: 'shell-path', label: 'PATH della shell di login', required: false, ok: true, message: 'PATH caricato dalla shell di login',
+      id: 'shell-path', label: 'PATH della shell di login', required: false, ok: true, message: 'PATH caricato dalla shell di login', technical: true,
     });
     const fallback = await runDoctor({ ...base, shellPath: { source: 'fallback', error: 'timeout dopo 15 s' } });
     expect(fallback.find((c) => c.id === 'shell-path')).toEqual({
       id: 'shell-path', label: 'PATH della shell di login', required: false, ok: false, message: 'PATH di riserva: timeout dopo 15 s',
-      fix: 'Se mancano programmi, avvia Motion Studio dal terminale o controlla i file di avvio della shell',
+      fix: 'Se mancano programmi, avvia Motion Studio dal terminale o controlla i file di avvio della shell', technical: true,
     });
     expect(hasBlockingFailure(fallback)).toBe(false);
+    // User report 91: never "unknown reason".
+    const noReason = (await runDoctor({ ...base, shellPath: { source: 'fallback' } })).find((c) => c.id === 'shell-path')!;
+    expect(noReason.message).toBe(t().doctor.shellPathFallbackPlain);
+    expect(noReason.message).not.toMatch(/sconosciuto|unknown/i);
   });
   it('flags a workspace path with glob characters as an optional failed check that names it (decisions 141, 790)', async () => {
     const base = { exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' };
@@ -167,7 +179,7 @@ describe('runDoctor', () => {
       const badHome = join(holder, 'h (x) [y]');
       const badConfig = join(holder, 'cfg {z}');
       const row = (await runDoctor({ ...base, home: badHome, configDir: badConfig })).find((c) => c.id === 'agent-deny-paths');
-      expect(row).toEqual({ id: 'agent-deny-paths', label: t().doctor.denyPathsLabel, required: false, ok: false, message: t().doctor.denyPathsGlob({ paths: `${badHome}, ${badConfig}`, count: 2 }) });
+      expect(row).toEqual({ id: 'agent-deny-paths', label: t().doctor.denyPathsLabel, required: false, ok: false, message: t().doctor.denyPathsGlob({ paths: `${badHome}, ${badConfig}`, count: 2 }), technical: true });
       expect(row!.message).toContain(badHome);
       expect(row!.message.startsWith(`The paths `) || row!.message.startsWith(`I percorsi `)).toBe(true);
       // A clean-named link to such a folder: its real path is named.
@@ -231,8 +243,8 @@ describe('runDoctor Phase 13 agent capabilities (decision 804)', () => {
   it('reports the fallback for an unverified version: queued only, stop and resume (optional, not a problem)', async () => {
     const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', agentOptIn: {} });
     expect(agentChecks(checks)).toEqual([
-      { id: 'live-messages', label: 'Messaggi durante il lavoro', required: false, ok: true, message: 'solo in coda (non verificati per questa versione di Claude Code)' },
-      { id: 'interrupt', label: 'Interruzione', required: false, ok: true, message: 'ferma e riprendi' },
+      { id: 'live-messages', label: 'Messaggi durante il lavoro', required: false, ok: true, message: 'solo in coda (non verificati per questa versione di Claude Code)', technical: true },
+      { id: 'interrupt', label: 'Interruzione', required: false, ok: true, message: 'ferma e riprendi', technical: true },
     ]);
     expect(hasBlockingFailure(checks)).toBe(false);
   });
@@ -256,10 +268,10 @@ describe('runDoctor Phase 13 agent capabilities (decision 804)', () => {
     expect(await run('2.1.300', { liveInput: true, interrupt: true })).toEqual(['solo in coda (non verificati per questa versione di Claude Code)', 'ferma e riprendi']);
   });
 
-  it('a missing claude means the fallback, even with the settings on', async () => {
+  it('user report 91: without Claude Code the live-messages and interrupt rows are not shown (they would say nothing useful)', async () => {
     const { ['claude --version']: _, ['claude auth status --json']: __, ...rest } = allGood;
     const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', agentOptIn: { liveInput: true, interrupt: true } });
-    expect(agentChecks(checks).map((c) => c.message)).toEqual(['solo in coda (non verificati per questa versione di Claude Code)', 'ferma e riprendi']);
+    expect(agentChecks(checks)).toEqual([]);
   });
 
   it('the English texts are the orchestrator\'s wording (decisions log 610)', async () => {
@@ -273,5 +285,49 @@ describe('runDoctor Phase 13: version parsing shared with the route', () => {
   it('an x.y version (not x.y.z) is unknown for the capability rows, as for /api/agent/capabilities', async () => {
     const checks = await runDoctor({ exec: fakeExec({ ...allGood, 'claude --version': ok('2.1 (Claude Code)') }), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', agentOptIn: { liveInput: true } });
     expect(checks.find((c) => c.id === 'live-messages')?.message).toBe('solo in coda (non verificati per questa versione di Claude Code)');
+  });
+});
+
+describe('runDoctor · first-run setup for non-technical users (user report 91)', () => {
+  const sandbox = async () => ({ available: false, reason: t().doctor.sandboxWindows });
+  it('Windows: no sandbox row and no login-shell PATH row (they do not apply there)', async () => {
+    const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', platform: 'win32', sandbox, shellPath: { source: 'fallback' } });
+    expect(checks.some((c) => c.id === 'sandbox')).toBe(false);
+    expect(checks.some((c) => c.id === 'shell-path')).toBe(false);
+  });
+  it('Windows: the Claude Code fix is the official PowerShell installer', async () => {
+    const { ['claude --version']: _, ['claude auth status --json']: __, ...rest } = allGood;
+    const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', platform: 'win32' });
+    expect(checks.find((c) => c.id === 'claude')).toMatchObject({ fix: 'irm https://claude.ai/install.ps1 | iex', action: 'install-claude' });
+  });
+  it('macOS and Linux keep the sandbox row, as a technical one', async () => {
+    const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', platform: 'linux', sandbox: async () => ({ available: true, reason: '' }) });
+    expect(checks.find((c) => c.id === 'sandbox')).toMatchObject({ ok: true, technical: true });
+  });
+  it('a signed-out Claude Code offers the sign-in', async () => {
+    const checks = await runDoctor({ exec: fakeExec({ ...allGood, 'claude auth status --json': ok(JSON.stringify({ loggedIn: false })) }), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
+    expect(checks.find((c) => c.id === 'claude-auth')).toMatchObject({ ok: false, action: 'sign-in', fix: 'claude auth login' });
+  });
+  it('the free plan is named plainly (only subscriptionType is read besides loggedIn)', async () => {
+    const free = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'free', email: 'x@y.z', orgName: 'Org' });
+    const checks = await runDoctor({ exec: fakeExec({ ...allGood, 'claude auth status --json': ok(free) }), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
+    const row = checks.find((c) => c.id === 'claude-auth')!;
+    expect(row).toMatchObject({ ok: false, message: t().doctor.freePlan, action: 'sign-in' });
+    expect(row.message).not.toContain('x@y.z');
+    expect(row.message).not.toContain('Org');
+    expect(hasBlockingFailure(checks)).toBe(true);
+    const pro = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'pro' });
+    expect((await runDoctor({ exec: fakeExec({ ...allGood, 'claude auth status --json': ok(pro) }), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' })).find((c) => c.id === 'claude-auth')!.ok).toBe(true);
+  });
+  it('a missing FFmpeg says what it is for and offers the install, never blocking', async () => {
+    const { ['ffmpeg -version']: _, ...rest } = allGood;
+    const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', platform: 'win32' });
+    expect(checks.find((c) => c.id === 'ffmpeg')).toMatchObject({ ok: false, required: false, message: t().doctor.ffmpegRecommended, fix: t().doctor.ffmpegFix.windows, action: 'install-ffmpeg' });
+    expect(hasBlockingFailure(checks)).toBe(false);
+  });
+  it('the main rows are not technical; the node row is technical when it passes', async () => {
+    const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
+    for (const id of ['git', 'ffmpeg', 'claude', 'claude-auth']) expect(checks.find((c) => c.id === id)!.technical, id).toBeUndefined();
+    expect(checks.find((c) => c.id === 'node')!.technical).toBe(true);
   });
 });
