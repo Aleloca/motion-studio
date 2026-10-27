@@ -120,3 +120,24 @@
 
 /* First load, before the app knows whether the setup is needed (App). */
 .ms-boot { min-height: 100vh; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+
+/* User report 91: plain remedies, the one-click setup actions, the plan note and the technical details. */
+.ms-remedy-plain { color: var(--text); line-height: 1.5; overflow-wrap: anywhere; }
+.ms-syscheck-advice { color: var(--faint); }
+.ms-remedy.ms-setup { flex-direction: column; align-items: stretch; gap: 10px; }
+.ms-setup-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.ms-setup-confirm { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+.ms-setup-confirm p { margin: 0; line-height: 1.5; }
+.ms-setup-status { display: flex; align-items: center; gap: 8px; margin: 0; line-height: 1.45; color: var(--text); }
+.ms-setup-status.ms-warn { color: var(--warn); }
+.ms-setup-link { align-self: flex-start; color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+.ms-setup-hint { margin: 0; color: var(--muted); line-height: 1.45; }
+.ms-setup-manual summary { cursor: pointer; color: var(--muted); }
+.ms-setup-manual ol { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
+.ms-setup-manual p { margin: 8px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
+.ms-setup-cmd { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 6px 6px 10px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); min-width: 0; }
+.ms-setup-cmd code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.ms-setup-plan { display: flex; align-items: flex-start; gap: 10px; padding: 10px 16px 12px 44px; border-bottom: 1px solid var(--line2); color: var(--muted); line-height: 1.5; }
+.ms-setup-plan .ms-icon, .ms-setup-plan svg { flex: none; margin-top: 3px; }
+.ms-tech { margin-top: 12px; }
+.ms-tech > summary { cursor: pointer; color: var(--muted); padding: 4px 0 8px; }

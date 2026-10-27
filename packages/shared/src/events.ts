@@ -254,6 +254,39 @@ export interface DoctorCheck {
   fix?: string;
   /** Informational only: shown with a neutral mark and left out of the passed count (the updates row). */
   info?: true;
+  /**
+   * User report 91: what the setup can do for this row with one click (after a confirmation): install Claude Code, sign in
+   * to Claude, install FFmpeg. The manual way stays in `fix`.
+   */
+  action?: 'install-claude' | 'sign-in' | 'install-ffmpeg';
+  /** User report 91: the row waits for another one (the sign-in waits for Claude Code): no remedy box, nothing to do here. */
+  waitsFor?: 'claude';
+  /** User report 91: a technical row: the first-run setup shows it under "Technical details" (Settings shows every row). */
+  technical?: true;
+}
+
+/** User report 91: one setup task (install Claude Code, sign in to Claude, install FFmpeg) as the core runs it. */
+export interface SetupTaskState {
+  state: 'idle' | 'running' | 'done' | 'failed' | 'cancelled';
+  /** Why it failed: `timeout` (it took too long), `exit` (the installer or login ended with an error), `download` (FFmpeg). */
+  error?: 'timeout' | 'exit' | 'download' | 'start';
+  /** FFmpeg download progress. */
+  bytes?: number;
+  total?: number | null;
+  /** Sign-in: the address to open when the browser did not open by itself (claude.ai/claude.com/anthropic.com only). */
+  loginUrl?: string;
+}
+
+/** `GET /api/setup`: what the setup buttons may do here, and their tasks. */
+export interface SetupStatus {
+  platform: 'windows' | 'mac' | 'linux' | 'other';
+  /** False when the server answers on a network address (not only on this computer): the buttons are refused. */
+  allowed: boolean;
+  /** The official native install command for this computer (shown under "Prefer to do it by hand?"). */
+  claudeManual: string;
+  /** The FFmpeg build the button installs here (null: none for this computer). */
+  ffmpeg: { version: string; source: string; sizeBytes: number; license: string } | null;
+  tasks: { claudeInstall: SetupTaskState; claudeLogin: SetupTaskState; ffmpegInstall: SetupTaskState };
 }
 
 export type ProjectListItem =

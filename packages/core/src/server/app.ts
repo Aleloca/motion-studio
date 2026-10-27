@@ -46,6 +46,8 @@ import { MemoryVault, type SecretsVault } from '../secrets/vault.ts';
 import { ApprovalBroker } from '../approvals/broker.ts';
 import { registerSettingsRoutes } from './settings-routes.ts';
 import { defaultChromeInstaller, registerRenderEngineRoutes, type ChromeInstaller } from './render-engine-routes.ts';
+import { registerSetupRoutes } from './setup-routes.ts';
+import type { SetupService } from '../setup/setup-service.ts';
 import { assertAgentFolders, CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes, type RecoverOptions } from './creative-routes.ts';
 import { noTrash, type TrashFn } from '../trash.ts';
@@ -175,6 +177,8 @@ export interface ServerDeps {
    * there is a renderer and a config folder; null: none (tests inject a fake: no test downloads anything).
    */
   chromeInstaller?: ChromeInstaller | null;
+  /** User report 91: the setup's one-click tasks (install Claude Code, sign in, install FFmpeg). Absent: no setup routes. */
+  setup?: SetupService;
   /** The ffmpeg runner of the video analyses (default: the system's). Test seam. */
   analysisFfExec?: CommandExec;
   /** The base time limit of the video analyses' audio check (default 60 s). Test seam. */
@@ -599,7 +603,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const j = t().jobs;
       const head = notice.kind === 'broken' ? j.settingsHoldBroken : notice.kind === 'held' ? j.workspaceSettingsNotReverted : j.settingsAdjusted;
       const parts = [head, ...(notice.fields.length ? [j.settingsHeldFields({ fields: notice.fields.join(', ') })] : []), ...(notice.stuck ? [j.settingsHoldStuck({ path: notice.stuck })] : [])];
-      checks.push({ id: 'workspace-settings', label: t().doctor.workspaceSettingsLabel, required: false, ok: false, message: parts.join(' ') });
+      checks.push({ id: 'workspace-settings', label: t().doctor.workspaceSettingsLabel, required: false, ok: false, message: parts.join(' '), technical: true });
     }
     return checks;
   });
@@ -962,6 +966,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return billingCache.value;
   };
   registerUsageRoutes(app, { workspace: () => workspace, ledger: usageLedger, billing });
+  if (deps.setup) {
+    // A new Claude Code or a new sign-in: the version and the billing method are read again.
+    deps.setup.onEnded(() => { versionCache = null; billingCache = null; });
+    registerSetupRoutes(app, { setup: deps.setup });
+  }
 
   const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());
   // Always registered: it provides reply.sendFile to the creative file route; it serves the web build only when present.

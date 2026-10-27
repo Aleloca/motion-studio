@@ -8,6 +8,7 @@ import { t } from './i18n.ts';
 import { folderWithGlobChars, SLUG_RE } from './workspace-store.ts';
 import { execFfVia } from './media/ffmpeg-exec.ts';
 import { capabilitiesFor, parseClaudeVersion, verifiedFor, type CapabilityOptIn } from './agent/agent-capabilities.ts';
+import { claudeManualCommand } from './setup/setup-service.ts';
 
 const versionIn = (s: string) => s.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1];
 const firstLine = (s: string) => s.split('\n').map((l) => l.trim()).find(Boolean);
@@ -44,12 +45,19 @@ export async function runDoctor(opts: {
   agentOptIn?: CapabilityOptIn;
   /** Decision 802: the desktop's updater is off (development run, unsigned build): one informational row (ok, so it neither counts as a recommendation nor blocks). */
   updatesOff?: boolean;
+  /**
+   * User report 91: the platform the remedies are written for (default `process.platform`). On Windows there is no sandbox
+   * row (Claude Code has no sandbox there) and no login-shell PATH row (Windows has none).
+   */
+  platform?: NodeJS.Platform;
 }): Promise<DoctorCheck[]> {
   const { exec } = opts;
   const [claudeBin, ...claudePrefix] = opts.claudeCommand;
   if (!claudeBin) throw new Error(t().errors.claudeCommandEmpty);
   const checks: DoctorCheck[] = [];
   const d = t().doctor;
+  const platform = opts.platform ?? process.platform;
+  const os = platform === 'win32' ? 'windows' : platform === 'darwin' ? 'mac' : 'linux';
 
   const nodeVersion = (opts.nodeVersion ?? process.version).replace(/^v/, '');
   const nodeMajor = Number(nodeVersion.split('.')[0]);
@@ -57,13 +65,14 @@ export async function runDoctor(opts: {
     id: 'node', label: 'Node.js', required: true, version: nodeVersion, ok: nodeMajor >= 22,
     message: nodeMajor >= 22 ? d.supportedVersion : d.nodeTooOld,
     fix: nodeMajor >= 22 ? undefined : d.nodeFix,
+    ...(nodeMajor >= 22 ? { technical: true as const } : {}),
   });
 
   const git = await exec('git', ['--version']);
   checks.push(git.code === 0
     ? { id: 'git', label: 'Git', required: true, ok: true, version: versionIn(git.stdout), message: d.installed }
     : git.notFound
-      ? { id: 'git', label: 'Git', required: true, ok: false, message: d.gitMissing, fix: d.gitFix }
+      ? { id: 'git', label: 'Git', required: true, ok: false, message: d.gitMissing, fix: d.gitFix[os] }
       : { id: 'git', label: 'Git', required: true, ok: false, message: brokenMessage(git) });
 
   let ffmpeg = await execFfVia(exec, 'ffmpeg', ['-version']).catch((e): CommandResult => ({ code: -1, stdout: '', stderr: String((e as Error).message), notFound: false, badArch: isBadArchError(e) }));
@@ -82,9 +91,9 @@ export async function runDoctor(opts: {
       message: arch?.translated ? d.ffmpegRosetta : d.installed,
     }
     : ffmpeg.notFound
-      ? { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: d.ffmpegRecommended, fix: d.ffmpegFix }
+      ? { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: d.ffmpegRecommended, fix: d.ffmpegFix[os], action: 'install-ffmpeg' }
       : ffmpeg.badArch
-        ? { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: d.ffmpegWrongArch, fix: d.ffmpegFix }
+        ? { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: d.ffmpegWrongArch, fix: d.ffmpegFix[os], action: 'install-ffmpeg' }
       : { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: brokenMessage(ffmpeg) });
 
   const claude = await exec(claudeBin, [...claudePrefix, '--version']);
@@ -92,23 +101,26 @@ export async function runDoctor(opts: {
   checks.push(claudeOk
     ? { id: 'claude', label: 'Claude Code', required: true, ok: true, version: versionIn(claude.stdout), message: d.installed }
     : claude.notFound
-      ? { id: 'claude', label: 'Claude Code', required: true, ok: false, message: d.claudeMissing, fix: 'npm install -g @anthropic-ai/claude-code' }
+      ? { id: 'claude', label: 'Claude Code', required: true, ok: false, message: d.claudeMissing, fix: claudeManualCommand(platform), action: 'install-claude' }
       : { id: 'claude', label: 'Claude Code', required: true, ok: false, message: brokenMessage(claude) });
 
   if (!claudeOk) {
+    // Nothing to do on this row yet: no remedy, no button (user report 91).
     checks.push({
       id: 'claude-auth', label: d.claudeAuthLabel, required: true, ok: false,
-      message: claude.notFound ? d.installClaudeFirst : d.claudeMustRespond,
+      message: claude.notFound ? d.installClaudeFirst : d.claudeMustRespond, waitsFor: 'claude',
     });
   } else {
     const auth = await exec(claudeBin, [...claudePrefix, 'auth', 'status', '--json']);
-    let loggedIn = false;
-    try { loggedIn = JSON.parse(auth.stdout).loggedIn === true; } catch { loggedIn = false; }
-    checks.push(loggedIn
+    const status = authStatusOf(auth.stdout);
+    checks.push(status.loggedIn && status.freePlan
+      ? { id: 'claude-auth', label: d.claudeAuthLabel, required: true, ok: false, message: d.freePlan, fix: 'claude auth login', action: 'sign-in' }
+      : status.loggedIn
       ? { id: 'claude-auth', label: d.claudeAuthLabel, required: true, ok: true, message: d.authenticated }
-      : { id: 'claude-auth', label: d.claudeAuthLabel, required: true, ok: false, message: d.notAuthenticated, fix: 'claude auth login' });
+      : { id: 'claude-auth', label: d.claudeAuthLabel, required: true, ok: false, message: d.notAuthenticated, fix: 'claude auth login', action: 'sign-in' });
   }
-  if (opts.agentOptIn) {
+  // Without Claude Code these rows say nothing useful (user report 91).
+  if (opts.agentOptIn && claudeOk) {
     // Informational rows (ok, optional): the fallback is a working path, not a problem.
     // Same parsing as the route and the launcher (x.y.z), so the reports cannot disagree.
     const version = claudeOk ? parseClaudeVersion(claude.stdout) : null;
@@ -116,29 +128,33 @@ export async function runDoctor(opts: {
     const effective = capabilitiesFor(version, opts.agentOptIn);
     const verified = verifiedFor(version);
     checks.push({
-      id: 'live-messages', label: d.liveMessagesLabel, required: false, ok: true,
+      id: 'live-messages', label: d.liveMessagesLabel, required: false, ok: true, technical: true,
       message: effective.liveInput ? d.liveMessagesSupported : verified.liveInput ? d.liveMessagesOff : d.liveMessagesQueued,
     });
     checks.push({
-      id: 'interrupt', label: d.interruptLabel, required: false, ok: true,
+      id: 'interrupt', label: d.interruptLabel, required: false, ok: true, technical: true,
       message: effective.interrupt ? d.interruptSupported : verified.interrupt ? d.interruptOff : d.interruptStopResume,
     });
   }
-  if (opts.sandbox) {
+  // User report 91: Claude Code has no sandbox on Windows, and Windows has no login shell: those rows do not apply there.
+  if (opts.sandbox && platform !== 'win32') {
     const s = await opts.sandbox();
     checks.push(s.disabled
-      ? { id: 'sandbox', label: d.sandboxLabel, required: false, ok: false, message: s.reason }
+      ? { id: 'sandbox', label: d.sandboxLabel, required: false, ok: false, message: s.reason, technical: true }
       : s.available
-      ? { id: 'sandbox', label: d.sandboxLabel, required: false, ok: true, message: d.sandboxAvailable }
-      : { id: 'sandbox', label: d.sandboxLabel, required: false, ok: false, message: s.reason, fix: d.sandboxFix });
+      ? { id: 'sandbox', label: d.sandboxLabel, required: false, ok: true, message: d.sandboxAvailable, technical: true }
+      : { id: 'sandbox', label: d.sandboxLabel, required: false, ok: false, message: s.reason, fix: d.sandboxFix, technical: true });
   }
-  if (opts.shellPath) {
+  if (opts.shellPath && platform !== 'win32') {
     const ok = opts.shellPath.source === 'login-shell';
+    const reason = opts.shellPath.error?.trim();
     checks.push(ok
-      ? { id: 'shell-path', label: d.shellPathLabel, required: false, ok, message: d.shellPathLoaded }
+      ? { id: 'shell-path', label: d.shellPathLabel, required: false, ok, message: d.shellPathLoaded, technical: true }
       : {
-        id: 'shell-path', label: d.shellPathLabel, required: false, ok, message: d.shellPathFallback({ reason: opts.shellPath.error ?? d.unknownReason }),
-        fix: d.shellPathFix,
+        id: 'shell-path', label: d.shellPathLabel, required: false, ok,
+        // Never "unknown reason": without one the row just says the fallback is in use.
+        message: reason ? d.shellPathFallback({ reason }) : d.shellPathFallbackPlain,
+        fix: d.shellPathFix, technical: true,
       });
   }
   const globFolder = opts.workspacePath ? await agentFolderWithGlobChars(opts.workspacePath) : null;
@@ -156,9 +172,9 @@ export async function runDoctor(opts: {
     if (hit && !denyPaths.includes(hit)) denyPaths.push(hit);
   }
   if (denyPaths.length > 0) {
-    checks.push({ id: 'agent-deny-paths', label: d.denyPathsLabel, required: false, ok: false, message: d.denyPathsGlob({ paths: denyPaths.join(', '), count: denyPaths.length }) });
+    checks.push({ id: 'agent-deny-paths', label: d.denyPathsLabel, required: false, ok: false, message: d.denyPathsGlob({ paths: denyPaths.join(', '), count: denyPaths.length }), technical: true });
   }
-  if (opts.updatesOff) checks.push({ id: 'updates', label: d.updatesLabel, required: false, ok: true, info: true, message: d.updatesOff });
+  if (opts.updatesOff) checks.push({ id: 'updates', label: d.updatesLabel, required: false, ok: true, info: true, message: d.updatesOff, technical: true });
   return checks;
 }
 
@@ -176,6 +192,18 @@ export async function agentFolderWithGlobChars(workspacePath: string): Promise<s
     if (hit) return hit;
   }
   return null;
+}
+
+/**
+ * The fields of `claude auth status --json` the doctor reads: `loggedIn`, and `subscriptionType` only to say plainly when
+ * the plan is the free one (which does not include Claude Code). Email and organisation are never read nor logged.
+ */
+export function authStatusOf(stdout: string): { loggedIn: boolean; freePlan: boolean } {
+  let data: unknown;
+  try { data = JSON.parse(stdout); } catch { return { loggedIn: false, freePlan: false }; }
+  if (typeof data !== 'object' || data === null) return { loggedIn: false, freePlan: false };
+  const { loggedIn, subscriptionType } = data as { loggedIn?: unknown; subscriptionType?: unknown };
+  return { loggedIn: loggedIn === true, freePlan: typeof subscriptionType === 'string' && subscriptionType.toLowerCase() === 'free' };
 }
 
 export const hasBlockingFailure = (checks: DoctorCheck[]) => checks.some((c) => c.required && !c.ok);

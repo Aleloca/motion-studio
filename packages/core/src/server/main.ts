@@ -18,7 +18,11 @@ import { parseClaudeVersion } from '../agent/agent-capabilities.ts';
 import { LanguageController, detectSystemLocales, t } from '../i18n.ts';
 import { execCommand } from '../exec.ts';
 import { Git } from '../git.ts';
-import { createFfmpegTools } from '../media/media-tools.ts';
+import { createFfmpegTools, reloadableMediaTools } from '../media/media-tools.ts';
+import { refreshToolPath } from '../setup/tool-path.ts';
+import { SetupService } from '../setup/setup-service.ts';
+import { ffmpegBuildFor } from '../setup/ffmpeg-download.ts';
+import { hostArch } from '../render/arch.ts';
 import { KeyringVault, type SecretsVault } from '../secrets/vault.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { buildServer } from './app.ts';
@@ -157,8 +161,25 @@ async function lockAndCheck(configDir: string, opts: StartServerOptions): Promis
   return lock;
 }
 
+/** Whether `host` is reachable only from this computer (user report 91: the setup's installs run only then). */
+export function isLoopbackHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  return h === 'localhost' || h === '::1' || /^127(?:\.\d{1,3}){3}$/.test(h);
+}
+
 async function startLocked(configDir: string, opts: StartServerOptions) {
   const claudeCommand = opts.claudeCommand ?? claudeCommandFromEnv();
+  const host = opts.host ?? '127.0.0.1';
+  // User report 91: the folders where the setup installs Claude Code (~/.local/bin) and FFmpeg, and on Windows the PATH
+  // the registry holds now, appended to this process's PATH, at start and before every check.
+  const toolPath = () => refreshToolPath({ env: process.env, home: homedir(), configDir, exec: execCommand }).catch(() => process.env.PATH ?? '');
+  await toolPath();
+  const media = reloadableMediaTools(await createFfmpegTools());
+  const setup = new SetupService({
+    claudeCommand: () => claudeCommand, exec: execCommand, configDir, allowed: isLoopbackHost(host),
+    ffmpegBuild: ffmpegBuildFor(process.platform, await hostArch()),
+    onChanged: async () => { await toolPath(); await media.refresh(); },
+  });
   // Leftovers (config and token files) of a run that was killed with the app; no other instance is alive here.
   await sweepRunDir(configDir).catch(() => {});
   // Render work folders and browser profiles a killed render left in the OS temp folder (only unused, old `ms-render-*`).
@@ -184,7 +205,8 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     runner: new ClaudeCodeRunner(claudeCommand),
     bridge, mcpCommand, sandbox, ...(opts.mcpEnv ? { mcpEnv: opts.mcpEnv } : {}),
     ...(opts.updatesState ? { updatesState: opts.updatesState } : {}),
-    doctor: (extra) => runDoctor({ updatesOff: opts.updatesState?.() === 'off', exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, configDir, home: homedir(), ...(opts.shellPath ? { shellPath: opts.shellPath } : {}), ffmpegInfo: () => findFfmpeg(), ...(extra.agentOptIn ? { agentOptIn: extra.agentOptIn } : {}) }),
+    setup,
+    doctor: async (extra) => { await toolPath(); await media.refresh(); return runDoctor({ updatesOff: opts.updatesState?.() === 'off', exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, configDir, home: homedir(), ...(opts.shellPath ? { shellPath: opts.shellPath } : {}), ffmpegInfo: () => findFfmpeg(), ...(extra.agentOptIn ? { agentOptIn: extra.agentOptIn } : {}) }); },
     // Phase 13: `claude --version` for the capability table (cached by the server).
     claudeVersion: async () => {
       const [bin, ...prefix] = claudeCommand;
@@ -195,7 +217,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     billing: () => readBilling({ exec: execCommand, claudeCommand }),
     webDir: opts.webDir,
     vault: opts.vault ?? new KeyringVault(),
-    media: await createFfmpegTools(),
+    media: media.tools,
     render: createRenderEngine({ ...(opts.renderProvider ? { provider: opts.renderProvider } : {}), appDataDir: configDir }),
     ...(opts.renderOptions ? { renderOptions: { ...opts.renderOptions } } : {}),
     onCompositionOrigin: (o) => { compositionOrigin = o; },
@@ -204,7 +226,6 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     uiOrigins: () => uiOrigins,
     ...(opts.whisperDir ? { whisperDir: opts.whisperDir } : {}),
   });
-  const host = opts.host ?? '127.0.0.1';
   const url = opts.port === 'auto' ? await listenAuto(app, host) : await app.listen({ port: opts.port ?? 4317, host });
   bridge.setOrigin(url);
   // The core serves the UI itself (CLI and desktop): its own origin may embed live previews; dev adds Vite's.
