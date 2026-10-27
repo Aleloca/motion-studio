@@ -438,8 +438,11 @@ describe('lock ordering', { timeout: 60_000 }, () => {
     expect(g.members.filter((x) => x.status === 'discarded').every((x) => x.letter === 'b')).toBe(true);
     expect(g.picks).toEqual({});
     // The stopped one took it when its job ended (Important 1 of fix round 1).
-    await vi.waitFor(async () => expect((await json(sis('c'))).brief.goal).toBe(goal));
-    expect(await side.pendingBrief(projectDir, sis('c'))).toBeNull();
+    // The brief is written before the pending one is cleared: wait for both.
+    await vi.waitFor(async () => {
+      expect((await json(sis('c'))).brief.goal).toBe(goal);
+      expect(await side.pendingBrief(projectDir, sis('c'))).toBeNull();
+    });
   });
 });
 
