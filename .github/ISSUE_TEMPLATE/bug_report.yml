@@ -1,0 +1,53 @@
+name: Bug report
+description: Something does not work as the guide says
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not paste API keys or private brand material. For security problems see SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Press ...
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you run Motion Studio
+      options:
+        - Desktop app (macOS)
+        - Desktop app (Windows)
+        - Desktop app (Linux AppImage)
+        - npx @motion-studio/cli
+        - From source
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Motion Studio version
+      description: Shown in the app (Settings) or in the release you downloaded.
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, the Doctor report (Settings → System check), console output.

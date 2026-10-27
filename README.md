@@ -5,27 +5,47 @@
   </picture>
 </p>
 
-# Motion Studio
+<h1 align="center">Motion Studio</h1>
 
-🇮🇹 [Italiano](README.it.md)
+<p align="center"><strong>Brief in. Motion out.</strong><br>
+A local, open-source app on top of Claude Code that turns a brief into motion-graphics videos for every format.</p>
+
+<p align="center">🇮🇹 <a href="README.it.md">Italiano</a></p>
 
 <p align="center">
-  <a href="https://aleloca.github.io/motion-studio/#final-cut"><img src="site/src/assets/video/launch-poster.webp" alt="The Motion Studio launch video" width="720"></a><br>
-  <a href="https://aleloca.github.io/motion-studio/#final-cut">Watch the launch video</a>
+  <a href="https://github.com/Aleloca/motion-studio/releases/latest"><img src="https://img.shields.io/github/v/release/Aleloca/motion-studio?label=release" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+  <a href="https://www.npmjs.com/package/@motion-studio/cli"><img src="https://img.shields.io/npm/v/@motion-studio/cli?label=npm" alt="npm version"></a>
+  <a href="https://github.com/Aleloca/motion-studio/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Aleloca/motion-studio/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="https://github.com/Aleloca/motion-studio/actions/workflows/pages.yml"><img src="https://img.shields.io/github/actions/workflow/status/Aleloca/motion-studio/pages.yml?branch=main&label=Pages" alt="Pages status"></a>
 </p>
 
-A local, open-source app for creating motion-graphics videos and images with your coding agent (initially **Claude Code**). Describe what you want, pick channels and formats: the agent produces a dedicated recomposition for each format. Everything stays on your computer: projects are folders of JSON/Markdown files versioned with git.
+<p align="center">
+  <a href="https://aleloca.github.io/motion-studio/#final-cut"><img src="docs/assets/hero.gif" alt="A brief becomes three variants, then a change in the chat, then every format recomposed" width="720"></a><br>
+  <a href="https://aleloca.github.io/motion-studio/#final-cut">Watch the full film</a>
+</p>
 
-<!-- screenshot: add -->
+## Quick start
+
+1. **Get the app.** Download it for macOS, Windows or Linux from [Releases](https://github.com/Aleloca/motion-studio/releases/latest), or run `npx @motion-studio/cli` (Node 22 or newer).
+2. **Have Claude Code ready.** Install [Claude Code](https://docs.claude.com/claude-code) and sign in (`claude auth login`). Motion Studio drives it, so you need a Claude plan that includes Claude Code (a paid plan); Motion Studio itself is free.
+3. **Describe what you want.** Open **Creatives → + New creative**, write the brief, pick the formats and press **Generate**.
+
+## What it does
+
+- **Brief to variants:** one brief, up to five creative directions side by side, each with every format.
+- **Change it by chat or by hand:** ask the agent for changes, or edit the composition directly in the editor.
+- **Your brand:** read from your website or your codebase (palette, fonts, logos, tone).
+- **Images, voice-over and music:** generated on your own provider keys, always asking before a paid call.
+- **Every format recomposed:** a dedicated layout for each channel, not a crop.
+- **Languages:** translate into up to 10 languages besides the original; right-to-left languages are not supported yet.
+- **Subtitles:** transcribed from the voice-over on your computer, drawn on the video in sync, and exported as .srt or .vtt.
+- **Export:** an mp4 for videos and an image for stills, named and organised for each format.
+
+Everything stays on your computer: projects are folders of JSON/Markdown files versioned with git.
 
 > **User guide**: every feature, step by step, with screenshots: https://aleloca.github.io/motion-studio/guide.html
-
-> The full design is in `docs/superpowers/specs/`. Developer guides: [CONTRIBUTING.md](CONTRIBUTING.md), [output contract](docs/output-contract.md), [providers](docs/providers.md), [agent backends](docs/agent-backends.md).
-
-## Language
-Motion Studio is available in English and Italian. On first launch it uses your system language: the first of your preferred languages that Motion Studio supports, English if none is. Change it in **Settings → Language** (System / English / Italiano): the interface, the desktop menus and the messages of the terminal launcher switch language, and the agent replies, and writes the texts meant for you, in the chosen language. When the desktop app attaches to a Motion Studio that is already running, its native menu keeps the language it started with; the interface follows the change live. To add another language, see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-language).
-
-Texts saved in the past (validation problems in a version, conversation messages, brand guidelines) are not translated; only new texts use the current language.
+> Developer guides: [CONTRIBUTING.md](CONTRIBUTING.md), [output contract](docs/output-contract.md), [providers](docs/providers.md), [agent backends](docs/agent-backends.md). The full design is in `docs/superpowers/specs/`.
 
 ## Installation
 
@@ -57,6 +77,11 @@ Only one Motion Studio runs per configuration folder: if one is already running 
 - FFmpeg (needed to render compositions into videos; stills need none; older creatives without it are shown as "unverified")
 - For the CLI (`npx`) only: Google Chrome or Chromium, which renders the compositions. Without it, **Settings → System check** offers to download Chrome for Testing into Motion Studio's data folder, only after showing its size and with your consent. The desktop app renders with its own Chromium.
 - Node.js 22+ for `npx` and the sources (not needed for the desktop app)
+
+## Language
+Motion Studio is available in English and Italian. On first launch it uses your system language: the first of your preferred languages that Motion Studio supports, English if none is. Change it in **Settings → Language** (System / English / Italiano): the interface, the desktop menus and the messages of the terminal launcher switch language, and the agent replies, and writes the texts meant for you, in the chosen language. When the desktop app attaches to a Motion Studio that is already running, its native menu keeps the language it started with; the interface follows the change live. To add another language, see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-language).
+
+Texts saved in the past (validation problems in a version, conversation messages, brand guidelines) are not translated; only new texts use the current language.
 
 ## How it works
 1. In a project, open **Creatives → + New creative**, describe what you want, pick channels and formats and press **Generate**.
@@ -207,27 +232,7 @@ A duration changed in the editor is your choice: the version stays complete even
 Current limits: signed desktop builds depend on the maintainers' certificates (see Release). On Ubuntu 24.04 and later the AppImage may fail to start because the system restricts unprivileged user namespaces (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), which Chromium's sandbox needs: you need an AppArmor profile for the app (or, at your own risk, disable that restriction); avoid `--no-sandbox`, which removes the window's isolation.
 
 ## Security
-- **Agent sandbox** (macOS; Linux with `bubblewrap` and `socat`): every agent job runs isolated. It can only write in the project folder and cannot read sensitive folders (`~/.ssh`, cloud credentials, keychains, the Motion Studio configuration). The network depends on the job: creatives and the console use only package registries, CDNs and the domains you add in **Settings → Network**; brand analysis has no network in the sandbox: it reads pages with `WebFetch` and downloads logos and fonts only with Motion Studio's `download_file` tool, which blocks private or local addresses (checked on the resolved IP, at every redirect); asset description has no network. The sandbox does not fall back to unrestricted execution: if it cannot start, commands do not run, and the agent cannot ask to run a command outside it.
-- **Files that configure Motion Studio and the agent**: in every job, with or without the sandbox, the agent cannot modify the project's `.git/`, `.claude/`, `.studio/`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`; Motion Studio runs git without the project's hooks.
-- **Linked codebases**: readable, never writable (interpreters included, thanks to the sandbox); Motion Studio still reports it if a git codebase changes during a turn.
-- **Codebases as brand sources**: read-only, no commands and no content search, secret files denied to the file tools and the sandbox, and the proposal discarded if the folder changes (see **Brand from a codebase**). The copy tool `import_codebase_file` checks every source after resolving links: inside the codebase, a regular file, not secret (in any letter case), an image or font extension.
-- **Approvals**: anything outside the perimeter (e.g. installing a program, writing outside the project) appears as a request on the job's page and at the top right: *Allow once*, *Always for this project* (revocable in the project's settings) or *Deny*. "Always for this project" is offered only for a short list of safe commands (`ls`, `mkdir`, `ffprobe`, image optimizers), for folders outside sensitive locations and the workspace, for web domains and for paid providers; other commands are approved one at a time. Rules live in `<project>/.studio/permissions.json`, protected from the agent. With no answer within 10 minutes the request is denied.
-- **Automatic approval of sandboxed commands** (**Project settings → Agent and approvals**, on by default, shared by every project): a shell command runs without asking only when all of these hold: it is a `Bash` command, the job runs in the sandbox, the setting was on when the job started and is still on, and the agent did not ask to run it outside the sandbox (`dangerouslyDisableSandbox`). This covers creatives, brand analysis and asset description. It is safe because an approved command still runs inside the sandbox (checked live: it cannot write outside the allowed folders or reach other sites even when approved). Under the same conditions, reading a file in Claude Code's own per-user temporary folder (`/tmp/claude-<uid>`, where the agent's check frames may land) is approved too, never the rest of the temporary folder; the agent is told to keep check frames in `creatives/<slug>/work/tmp/` inside the project, which is never versioned. Everything else still asks: other files outside the project, paid providers, new websites. Each command or read approved this way is listed in the conversation ("N commands ran automatically in the sandbox · Details", with a plain-language explanation and risk indicators) and, for brand analysis, on the analysis card and in the Analyses list of the Brand page (from the proposal's `log.jsonl`). The setting **applies to new jobs**: turning it on does not change jobs already running; turning it off takes effect at their next request.
-- **Command explanations**: approval cards and automatic approvals describe the command in plain words with risk indicators (e.g. "Complex command", "Deletes files"), computed by Motion Studio from the command itself; when it cannot be sure, it says so and rates the command at least medium instead of guessing. The reason written by the agent is only shown as a quote ("The agent says: …") and never replaces the explanation. The full command is always available under **Show command**.
-- **API keys**: in the system keychain (or in the `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY` environment variables); the agent never sees them: the key variables are removed from the agent's environment (and its MCP server's) and the MCP tools ask Motion Studio to call the providers.
-- **Agent actions on the app** (decision 917): the agent's app tools act only on its own creative, its variant group and its project, chosen by Motion Studio from the job's bridge token (no tool takes a path, a project or a creative), with strict inputs checked again by the core. They never archive, delete or change settings, keys or permissions, and the export to a folder stays the user's. A brief can make the agent use them, which the user accepted for these actions; the limits above keep it from starting paid turns without end.
-- **Costs**: image, voice-over, sound effect and music generations ask for confirmation before each call, from the agent and from **Generate** in Assets alike (can be turned off in Settings with **Ask before using paid providers**).
-- **Interface access code**: Motion Studio's APIs answer only to the interface opened from the terminal link (the code is in `ui-token` in the configuration folder). It is a defense against stray local requests, for example web pages open in the browser or programs that do not know the code; it is not a barrier against a process of the same user that can read the configuration folder.
-- **Without the sandbox** (Windows, Linux without bubblewrap, or isolation turned off): Motion Studio uses the restricted command list of the previous phase and reports it in the Doctor and in Settings. Without the sandbox the allowed commands (node, python, npm/npx, pip, ffmpeg) can read and write anywhere and contact Motion Studio itself: use the sandbox. They can also read Motion Studio's configuration folder, including the interface token (`ui-token`) and the bridge tokens of the jobs running at that moment (`run/*.token`): with the first a program can use Motion Studio's whole interface, approvals included; with a bridge token it can act as that running job, in its project and with its tools (a paid call still asks for confirmation unless an "Always" rule exists). The agent's Read, Grep and Glob tools are denied on that folder in every mode, and a permission request that names a path inside it is refused without asking you; commands are not checked that way. In particular, an interpreter started by the agent could modify `.studio/permissions.json`: Motion Studio accepts only rules in the formats that "Always for this project" can produce (safe commands, folders outside sensitive locations and the workspace, web domains, provider confirmations), so the agent could grant itself those permissions or skip a provider's cost confirmation, but not go beyond those limits.
-- **Workspace settings without the sandbox**: the agent's interpreters could also rewrite the workspace settings (`.studio/settings.json`). During an unsandboxed run Motion Studio uses the settings the run started with and puts the file back afterwards, with a warning in the chat. If it cannot, it holds the security-relevant fields (sandbox, approvals, paid-call confirmation, the live opt-ins, extra domains, model, concurrent jobs) at the stricter of its copy and the file, across restarts, and the Doctor says so until you save the settings. If even that copy cannot be kept, unsandboxed agent runs are refused until you save the settings in the app. This is best-effort detection, not a boundary: without the sandbox the agent runs with your file access, Motion Studio's own folders included.
-- **Compositions (agent-written code that runs outside the sandbox).** A composition can contain HTML layers written by the agent, and Motion Studio renders it outside the sandbox, so it is isolated in four layers:
-  - its own local server (the composition server), on a different origin from the interface, reachable only with a short-lived, read-only token scoped to one composition, which serves only the runtime and that composition's `assets/` and `layers/` (no links, no paths outside, DNS-rebinding check);
-  - strict headers on every file: a Content-Security-Policy with no network (`connect-src 'none'`), HTML layers each in their own sandboxed frame;
-  - in a render, a Chromium page with every request outside the composition server blocked (request interception plus a dead proxy), no WebRTC or workers reaching out, a time and memory watchdog, and the whole process group killed on cancel, timeout or crash. The desktop app uses hidden, isolated Electron windows, each on its own in-memory session; the CLI uses Chrome with a throwaway profile in the temporary folder;
-  - in the interface, the live preview is an iframe with `sandbox="allow-scripts"` only (no `allow-same-origin`), on the composition server's origin, and the messages it sends are checked. The desktop app also cancels any request or navigation from a preview frame that leaves the composition server.
-
-  A composition never gets the interface's token, the API keys or the network. Storyboard images are served through signed URLs that expire after a few minutes. Every Motion Studio API still needs the interface access code.
-- **Unverified outputs:** without ffmpeg/ffprobe installed, Motion Studio cannot really check resolution and duration, and shows the outputs as "unverified".
+Motion Studio runs the agent in a sandbox, keeps your API keys away from it and isolates every composition it renders. The full model, and how to report a vulnerability, are in [SECURITY.md](SECURITY.md).
 
 ## Providers
 | Tool | Provider | Key |
@@ -266,7 +271,7 @@ General advice: analyze only websites you trust.
 - **Workspace and project folder names with glob characters are refused too:** the rules that keep the agent away from Motion Studio's own files (`CLAUDE.md`, `.mcp.json`, `.claude`, `.studio`, the logs) are path rules as well, so Motion Studio does not let you choose a workspace whose path or real path contains `(` `)` `[` `]` `{` `}` `*` `?` or (on macOS and Linux) `\`, nor create a project in one. On Windows the same rule-escaping has not been verified. For a workspace or project that already has such a path, every agent run (creative turns, the project console, brand analysis, asset descriptions, translations) is refused before it starts with a message naming the path, and the Doctor shows a warning; browsing, rendering and exporting still work. Rename the folder (or the parent folder that has them) and choose the workspace again. If your home folder or Motion Studio's configuration folder has such characters, nothing is refused, but the Doctor warns that the agent's deny rules on them (tokens, secret files) may not apply.
 - **Identity formats in other languages:** a translated render of a logo, favicon or app icon makes only the main image, never the file set.
 - **HTML layers hidden only by a clip:** in a render, an HTML layer that is invisible is skipped (not waited for) while it is out of frame or while its own `clip-path` leaves no area: an `inset()` whose opposite sides meet, a `circle()` or `ellipse()` with radius 0, or a `polygon()` collapsed onto one axis, in px or %. Other clips are still waited for: the clip of a parent other than the stage, and clip values with `calc()`, `var()`, `path()`, `url()` or `shape()`; if Chrome stalls on such a layer, the render fails after about 5 seconds with an error and a diagnosis instead of hanging.
-- **Project console:** with the sandbox on, commands run isolated; outside the sandbox the agent can modify the project's files, but requests that need an approval appear in the interface (see Security).
+- **Project console:** with the sandbox on, commands run isolated; outside the sandbox the agent can modify the project's files, but requests that need an approval appear in the interface (see [Security](SECURITY.md)).
 - **Image, voice, sound, music and stock providers:** they are described in [docs/providers.md](docs/providers.md) but have not been verified live with real keys (tests use simulated responses). The key checks were tried live only against a simulated endpoint; Google Fonts and the site-font reading of the brand analysis were tried live (see `docs/superpowers/notes/2026-10-13-phase11-live-checks.md`).
 
 ## Development
