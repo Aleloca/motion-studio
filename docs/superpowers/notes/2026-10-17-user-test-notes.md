@@ -682,6 +682,14 @@ arrives and worked on later together.
     Done (decisions 1925-1940): hero with the brief becoming three variants, then one section per step with a demo that
     plays on screen and pauses off it, never tied to the scroll; the chat is an illustration; Play with sound on
     Generate and Subtitles; all the review items. Open: "any language" vs the product's 10-language cap and no RTL.
+91. **First-run setup for a non-technical colleague (2026-10-27).** On Windows with only the Claude desktop app, the
+    setup showed an npm command, an empty fix box under sign-in, sandbox and login-shell PATH rows she could not fix and
+    "motivo sconosciuto". Done (decisions 1946-1960): "Install Claude Code" runs Anthropic's native installer after a
+    confirmation, "Sign in to Claude" starts the login and waits for it, the paid-plan requirement said plainly; "Install
+    FFmpeg" downloads a pinned 9.0.2 build checked by SHA-256 into the app's folder; the manual commands under "Prefer to
+    do it by hand?"; technical rows under a closed "Technical details"; no sandbox or login-shell PATH rows on Windows;
+    Recheck re-reads the PATH from the registry there. Open: never tried on real Windows nor with the real `claude auth
+    login` (if it asks to paste a code, revisit); the free-plan message relies on the undocumented `subscriptionType`.
 - **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
   Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
 - **Product ticket to file:** audio `role: music` ducking is documented but not implemented in core audio-mix.ts and
