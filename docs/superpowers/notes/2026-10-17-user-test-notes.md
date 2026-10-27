@@ -692,6 +692,9 @@ arrives and worked on later together.
     login` (if it asks to paste a code, revisit); the free-plan message relies on the undocumented `subscriptionType`.
 - **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
   Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
+  Verified (0.1.1, 2026-10-27): the first try got a 404 on PUT (npm fell back to setup-node's placeholder token); after
+  the user set the trusted publisher again (Aleloca/motion-studio, release.yml, no environment) the rerun of the npm job
+  published 0.1.1 with provenance.
 - **Product ticket to file:** audio `role: music` ducking is documented but not implemented in core audio-mix.ts and
   the runtime.
 - **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
