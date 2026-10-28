@@ -698,6 +698,12 @@ arrives and worked on later together.
 93. **Brief counter spilling out of the box (same test).** "0 / 100.000" overflowed the brief box on a smaller screen.
     Done (decisions 1962-1970): the bottom row wraps, and the counter shows only from 90% of the limit (warning colour at
     the limit). Real-Chrome layout tests at 1440, 1024, 600 and 420 px.
+94. **"Generate" in the chat while the variants work (2026-10-28).** On an identity group with A and B working and C and
+    D queued, nothing saved yet, the chat showed "Generate" and the send button stacked; Generate would have re-run the
+    first generation of every variant. Done (decisions 1971-1975): one rule (`canGenerateChat`) shows Generate only when
+    no variant has a version and no turn works or waits; the "all" box keeps one send button; the core skips a first
+    generation (request null) for a variant that works, waits or has a version. In the format view and the editor the
+    other members' versions are not known, only their turns: the core's skip is the second lock there.
 - **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
   Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
   Verified (0.1.1, 2026-10-27): the first try got a 404 on PUT (npm fell back to setup-node's placeholder token); after
