@@ -637,7 +637,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         {job?.waitReason ? <p className="ms-convo-wait" role="status"><Icon name="clock" size={12} />{t.web.variantGroup.waitReasons[job.waitReason]}</p> : null}
         {/* Always mounted (it renders nothing for an empty queue): an edit the queue overtook is kept even when the queue empties. */}
         <QueuedRequests slug={slug} creative={creative} queued={queued ?? []} working={working} onChanged={() => onQueueChanged?.()} {...(queueOps ? { ops: queueOps } : {})} />
-        <Composer transport={transport} top={composerTop} tools={composerTools} label={composerLabel} placeholderText={placeholder} draft={draft} extraContent={extraContent} sendOff={composerDisabled} outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working && (single || !variants?.all) ? job : undefined} fanout={variants?.all && !single ? variants.runAll : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={single ? undefined : appliesTo} brief={brief} onBriefSaved={onBriefSaved}
+        <Composer transport={transport} top={composerTop} tools={composerTools} label={composerLabel} placeholderText={placeholder} draft={draft} extraContent={extraContent} sendOff={composerDisabled} outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working && (single || !variants?.all) ? job : undefined} fanout={variants?.all && !single ? variants.runAll : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate && !working && !(memberJobs ?? []).some((m) => active(m.job))} onSent={onSent} beforeSend={beforeSend} appliesTo={single ? undefined : appliesTo} brief={brief} onBriefSaved={onBriefSaved}
           {...(single ? { single: { others: otherPins ?? [], ...(onRemoveOtherPin ? { onRemoveOther: onRemoveOtherPin } : {}) } } : {})} />
         {composerBelow}
       </div>
@@ -1313,7 +1313,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
           {brief ? <ServicesChip slug={slug} creative={creative} brief={brief} busy={busy} onSaved={() => onBriefSaved?.()} /> : null}
           <span className="ms-composer-hint">{hint}</span>
           {job && <StopMenu job={job} onError={setError} onRedirect={() => { setRedirect(true); setError(null); field.current?.focus(); }} />}
-          {canGenerate && !job && (
+          {canGenerate && !working && (
             <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={busy} onClick={() => void send({}, true)}>
               <Icon name="sparkle" size={13} />{t.web.newCreative.generate}
             </Button>

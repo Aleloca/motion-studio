@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { creativeJobKey, messages } from '@motion-studio/shared';
 import { variantApp, type VariantApp } from './helpers/variant-app.ts';
 import { cid } from './helpers/live-app.ts';
+import { CreativeStore } from '../src/creatives/creative-store.ts';
 
 vi.setConfig({ testTimeout: 60_000 });
 
@@ -135,6 +136,38 @@ describe('variant fan-out', () => {
     const again = await v.app.inject({ method: 'POST', url: `${v.url(`${slug}~b`)}/turns`, payload: { text: 'Prova' } });
     expect(again.statusCode, again.body).toBe(202);
     (await v.runOf(`${slug}~b`)).finish();
+    await v.waitIdle();
+  });
+
+  it('a first generation (request null) only starts a variant that never started (decisions 865, 1971)', async () => {
+    v = await variantApp();
+    const slug = await v.group(['Audace', 'Calma', 'Retro']);
+    const first = (await run(slug, { targets: ['a', 'b'], request: null })).json();
+    expect(Object.keys(first.jobs).sort()).toEqual(['a', 'b']);
+    // Again while A and B work or wait: nothing starts twice, they are skipped; C (never started) does start.
+    const again = (await run(slug, { targets: 'all-active', request: null })).json();
+    expect(again.skipped.sort()).toEqual(['a', 'b']);
+    expect(Object.keys(again.jobs)).toEqual(['c']);
+    // Only the working ones: a pure repeat answers 202 with everything skipped and no new job.
+    const before = (await v.jobs()).length;
+    const repeat = await run(slug, { targets: ['a', 'b', 'c'], request: null });
+    expect(repeat.statusCode).toBe(202);
+    expect(repeat.json()).toMatchObject({ jobs: {}, queued: [], skipped: ['a', 'b', 'c'] });
+    expect((await v.jobs()).length).toBe(before);
+    (await v.runOf(slug)).finish();
+    (await v.runOf(`${slug}~b`)).finish();
+    (await v.runOf(`${slug}~c`)).finish();
+    await v.waitIdle();
+  });
+
+  it('a first generation skips an idle variant that already has a version', async () => {
+    v = await variantApp();
+    const slug = await v.group(['Audace', 'Calma']);
+    await new CreativeStore(v.projectDir).appendVersion(`${slug}~b`, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null });
+    const res = (await run(slug, { targets: 'all-active', request: null })).json();
+    expect(res.skipped).toEqual(['b']);
+    expect(Object.keys(res.jobs)).toEqual(['a']);
+    (await v.runOf(slug)).finish();
     await v.waitIdle();
   });
 

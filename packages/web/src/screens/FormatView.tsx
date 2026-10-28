@@ -34,7 +34,7 @@ import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } 
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Pill, Segmented, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
-import { chatTick, useGroupChat } from './variants/useGroupChat.ts';
+import { canGenerateChat, chatTick, useGroupChat } from './variants/useGroupChat.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
 import { instanceName, presetFor } from '../instances.ts';
 import { appliesGroups, outputUrl, pointIn, ratioText } from './canvasModel.ts';
@@ -782,7 +782,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
                   self={groupChat.self} memberJobs={groupChat.memberJobs}
                   single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
               pins={pins} onRemovePin={removePin} onEditPin={onEditChip} formatName={formatLabel}
-              canGenerate={versions.length === 0} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} appliesTo={appliesTo}
+              canGenerate={canGenerateChat({ versions: versions.length, job: chatJob, memberJobs: groupChat.memberJobs })} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} appliesTo={appliesTo}
               brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
               versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} />
           ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>}

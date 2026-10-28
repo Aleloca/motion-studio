@@ -50,7 +50,7 @@ import { isVideoFile } from '../media.ts';
 import { usePinFrames } from './pinFrames.ts';
 import { rangeSeconds } from './pinModel.ts';
 import { retryTurn } from './creativeState.ts';
-import { chatTick, useGroupChat } from './variants/useGroupChat.ts';
+import { canGenerateChat, chatTick, useGroupChat } from './variants/useGroupChat.ts';
 import { AddVariantDialog, EditDirectionDialog, type BaseChoice } from './variants/AddVariantDialog.tsx';
 import { FinalSelection, type ChooserFormat } from './variants/FinalSelection.tsx';
 import { GroupStar } from './variants/GroupStar.tsx';
@@ -1124,7 +1124,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
               pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
               single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
               usageOf={(u) => <UsageBadge usage={u} billing={live.today?.billing ?? null} />}
-              canGenerate={versions.length === 0} onSent={({ pins: sent }) => { dropPins(sent); setViewing({}); reload(); }}
+              canGenerate={canGenerateChat({ versions: versions.length, job: chatJob, memberJobs: groupChat.memberJobs, memberVersions: Object.values(members).map((m) => m?.versions.length ?? 0) })} onSent={({ pins: sent }) => { dropPins(sent); setViewing({}); reload(); }}
               onSelectVersion={viewAll} snapshots={live.snapshots}
               appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
               self={groupChat.self} memberJobs={groupChat.memberJobs} onOpenVariant={(l) => { const m = group?.group.members.find((x) => x.letter === l); if (m) focusMember(m); }}
