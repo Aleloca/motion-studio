@@ -15,6 +15,18 @@ export function chatTick(ticks: Record<string, number>, project: string, creativ
 
 const isActive = (j: JobSummary) => j.state === 'queued' || j.state === 'running';
 
+/**
+ * Decisions 850, 865, 1971: "Generate" in the chat is for a creative (or a variant group) that never started. Nothing in it
+ * has a version, and no turn of it works or waits (the open one's, the chat's group turn, any other member's). While the
+ * variants work and have saved nothing yet the chat shows the working controls instead, never "Generate". One rule for the
+ * canvas, the format view and the editor. `memberVersions`: the version counts of the other members that are known.
+ */
+export function canGenerateChat(o: { versions: number; job: JobSummary | undefined; memberJobs: ReadonlyArray<{ job: JobSummary }>; memberVersions?: ReadonlyArray<number> }): boolean {
+  if (o.versions > 0 || (o.memberVersions ?? []).some((n) => n > 0)) return false;
+  if (o.job && isActive(o.job)) return false;
+  return !o.memberJobs.some((m) => isActive(m.job));
+}
+
 export interface GroupChat {
   /**
    * This page's variant: its letter in the group, else the one its slug names (a host whose group is gone keeps the merged

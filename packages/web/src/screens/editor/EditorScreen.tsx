@@ -42,7 +42,7 @@ import { creativeLocales } from '../creative/languagesModel.ts';
 import { entrySubtitleLang } from '../subtitles/LangSwitcher.tsx';
 import { frameUrl, usePreviewSession } from '../../components/compositionPreview.ts';
 import { Conversation } from '../../components/Conversation.tsx';
-import { chatTick, useGroupChat } from '../variants/useGroupChat.ts';
+import { canGenerateChat, chatTick, useGroupChat } from '../variants/useGroupChat.ts';
 import { IntegrityNotice, useIntegrity } from '../../components/IntegrityNotice.tsx';
 import type { EventsState } from '../../eventsReducer.ts';
 import { message } from '../../errors.ts';
@@ -1053,7 +1053,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
                   self={groupChat.self} memberJobs={groupChat.memberJobs}
                   single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
                   pins={sourcePins.map((p) => p.pin)} onRemovePin={removePin} onEditPin={editPin} onSelectVersion={onSelectVersion}
-                  formatName={labelOf} canGenerate={versions.length === 0} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots}
+                  formatName={labelOf} canGenerate={canGenerateChat({ versions: versions.length, job: chatJob, memberJobs: groupChat.memberJobs })} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots}
                   versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} appliesTo={appliesTo}
                   brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload} />
               ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>

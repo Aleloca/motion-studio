@@ -109,9 +109,12 @@ export class VariantFanout {
     // Who gets a turn now and who gets the request in its own queue (it is working).
     const idle: VariantMember[] = [];
     const busy: VariantMember[] = [];
+    const store = new CreativeStore(host.projectDir);
     for (const m of members) {
-      if (!turns.turnActive(memberRef(host, m.slug))) idle.push(m);
-      else if (!message) out.skipped.push(m.letter);
+      // Decisions 865, 1971: a first generation (no request) is for a variant that never started: one that already has a
+      // version, or whose turn is working or waiting, is left alone (the web never asks for that; this is the second lock).
+      if (!message && (turns.turnActive(memberRef(host, m.slug)) || (await store.readVersions(m.slug)).length > 0)) out.skipped.push(m.letter);
+      else if (!turns.turnActive(memberRef(host, m.slug))) idle.push(m);
       // A queued request has no formats of its own: refused, with the reason, rather than widened to every format.
       else if (formats) out.failed[m.letter] = t().errors.variantBusyFormats({ letter: upper(m.letter) });
       else busy.push(m);
