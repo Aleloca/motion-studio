@@ -690,6 +690,14 @@ arrives and worked on later together.
     do it by hand?"; technical rows under a closed "Technical details"; no sandbox or login-shell PATH rows on Windows;
     Recheck re-reads the PATH from the registry there. Open: never tried on real Windows nor with the real `claude auth
     login` (if it asks to paste a code, revisit); the free-plan message relies on the undocumented `subscriptionType`.
+92. **Workspace step on Windows (2026-10-28, the colleague's test of 0.1.1).** The field was empty with the placeholder
+    `/Users/tuonome/MotionStudio` (a macOS path on Windows) and the hint said Motion Studio creates the folder, yet
+    Continue stayed disabled until she picked one; she did not know where. Done (decisions 1962-1970): the server gives
+    `<home>/MotionStudio` with the platform's separator, the field starts on it and Continue is enabled; a configured
+    workspace is kept when the setup is replayed; the hint says the suggested folder is fine.
+93. **Brief counter spilling out of the box (same test).** "0 / 100.000" overflowed the brief box on a smaller screen.
+    Done (decisions 1962-1970): the bottom row wraps, and the counter shows only from 90% of the limit (warning colour at
+    the limit). Real-Chrome layout tests at 1440, 1024, 600 and 420 px.
 - **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
   Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
   Verified (0.1.1, 2026-10-27): the first try got a 404 on PUT (npm fell back to setup-node's placeholder token); after
