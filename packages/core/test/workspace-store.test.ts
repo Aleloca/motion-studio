@@ -6,12 +6,21 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
-import { slugify, WorkspaceError, WorkspaceStore } from '../src/workspace-store.ts';
+import { defaultWorkspacePath, slugify, WorkspaceError, WorkspaceStore } from '../src/workspace-store.ts';
 import { SettingsHoldStore } from '../src/settings-hold.ts';
 import { setLocale, t } from '../src/i18n.ts';
 
 let base: string;
 beforeEach(async () => { base = await mkdtemp(join(tmpdir(), 'ms-ws-')); });
+
+describe('defaultWorkspacePath (decision 1962)', () => {
+  it('is MotionStudio in the home, with the separator of the platform', () => {
+    expect(defaultWorkspacePath('C:\\Users\\Ada', 'win32')).toBe('C:\\Users\\Ada\\MotionStudio');
+    expect(defaultWorkspacePath('C:\\Users\\Ada\\', 'win32')).toBe('C:\\Users\\Ada\\MotionStudio');
+    expect(defaultWorkspacePath('/Users/ada', 'darwin')).toBe('/Users/ada/MotionStudio');
+    expect(defaultWorkspacePath('/home/ada/', 'linux')).toBe('/home/ada/MotionStudio');
+  });
+});
 
 describe('slugify', () => {
   it('normalizes accents, spaces and symbols', () => {
@@ -608,5 +617,22 @@ describe('WorkspaceStore live settings defaults (decision 804)', () => {
     expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ agentLiveInput: true, agentInterrupt: false, agentLiveDefaults: 804 });
     const again = await WorkspaceStore.open(root, new Git(), { create: false });
     expect(await again.readSettings()).toMatchObject({ theme: 'dark', agentLiveInput: true, agentInterrupt: false });
+  });
+});
+
+describe('GET /api/workspace suggestion (decision 1962)', () => {
+  it('suggests MotionStudio in the home of this computer before any workspace is configured', async () => {
+    const { buildServer } = await import('../src/server/app.ts');
+    const { AppConfigStore } = await import('../src/app-config.ts');
+    const { ClaudeCodeRunner } = await import('../src/agent/claude-code-runner.ts');
+    const { homedir } = await import('node:os');
+    const { defaultWorkspacePath } = await import('../src/workspace-store.ts');
+    const app = await buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'config')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']) });
+    try {
+      const info = (await app.inject('/api/workspace')).json() as { path: string | null; suggestedPath?: string };
+      expect(info.path).toBeNull();
+      expect(info.suggestedPath).toBe(defaultWorkspacePath(homedir(), process.platform));
+      expect(info.suggestedPath!.endsWith(`${process.platform === 'win32' ? '\\' : '/'}MotionStudio`)).toBe(true);
+    } finally { await app.close(); }
   });
 });

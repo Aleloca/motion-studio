@@ -125,6 +125,37 @@ describe('Welcome · step 2 (workspace)', () => {
     expect(await screen.findByRole('heading', { name: 'Create your first project' })).toBeTruthy();
   });
 
+  it('starts on the suggested folder, Continue enabled, saved as is (windows separator kept)', async () => {
+    const suggested = 'C:\\Users\\Ada\\MotionStudio';
+    api.setWorkspace.mockResolvedValue({ path: suggested, settings });
+    const { props } = setup({ step: 2, workspace: { ...noWorkspace, suggestedPath: suggested } });
+    const field = screen.getByLabelText<HTMLInputElement>('Folder');
+    expect(field.value).toBe(suggested);
+    expect(field.placeholder).toBe('');
+    expect(screen.getByText(/The suggested folder is fine/)).toBeTruthy();
+    expect(screen.getByText('C:\\Users\\Ada\\MotionStudio\\')).toBeTruthy();
+    const next = screen.getByRole('button', { name: 'Continue' });
+    expect((next as HTMLButtonElement).disabled).toBe(false);
+    await userEvent.click(next);
+    expect(api.setWorkspace).toHaveBeenCalledWith(suggested);
+    expect(props.onWorkspace).toHaveBeenCalledWith({ path: suggested, settings });
+  });
+
+  it('fills the suggestion when it arrives after the first render, without touching what was typed', async () => {
+    const { rerender } = setup({ step: 2 });
+    expect(screen.getByLabelText<HTMLInputElement>('Folder').value).toBe('');
+    rerender({ workspace: { ...noWorkspace, suggestedPath: '/home/ada/MotionStudio' } });
+    expect(screen.getByLabelText<HTMLInputElement>('Folder').value).toBe('/home/ada/MotionStudio');
+    await userEvent.clear(screen.getByLabelText('Folder'));
+    await userEvent.type(screen.getByLabelText('Folder'), '/data/ms');
+    expect(screen.queryByText(/The suggested folder is fine/)).toBeNull();
+  });
+
+  it('keeps showing the configured workspace instead of the suggestion', () => {
+    setup({ step: 2, workspace: { path: '/w', settings, error: null, suggestedPath: '/home/ada/MotionStudio' } });
+    expect(screen.getByLabelText<HTMLInputElement>('Folder').value).toBe('/w');
+  });
+
   it('offers a text field (no picker) in the browser', () => {
     setup({ step: 2 });
     expect(screen.queryByRole('button', { name: 'Choose folder…' })).toBeNull();

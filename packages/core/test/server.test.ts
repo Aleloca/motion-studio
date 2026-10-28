@@ -41,7 +41,7 @@ const setWorkspace = (path = join(base, 'Spazio di lavoro')) =>
 
 describe('workspace', () => {
   it('starts unconfigured and returns 409 for projects', async () => {
-    expect((await app.inject('/api/workspace')).json()).toEqual({ path: null, settings: null, error: null });
+    expect((await app.inject('/api/workspace')).json()).toEqual({ path: null, settings: null, error: null, suggestedPath: expect.stringMatching(/MotionStudio$/) });
     const res = await app.inject('/api/projects');
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toContain('workspace');
