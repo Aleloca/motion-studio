@@ -37,6 +37,8 @@ import { CustomFormatDialog } from './new-creative/CustomFormatDialog.tsx';
 
 /** Brief length shown under the field (decisions log 1220: the shared safety cap, no longer 2000). */
 const GOAL_MAX = BRIEF_TEXT_MAX;
+/** The counter shows from this share of the limit: an empty "0 / 100.000" says nothing (decision 1967). */
+const GOAL_COUNT_FROM = 0.9;
 const TITLE_MAX = 60;
 type Kind = 'all' | 'video' | 'image';
 /** Channels open on arrival (prototype): the rest sit behind "More channels" until asked for, searched or selected. */
@@ -722,7 +724,9 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
                 {mode === 'you' ? (
                   <button type="button" className="ms-chip ms-nc-cta" onClick={toAgent}><Icon name="sparkle" size={13} fill />{t.web.briefSession.cta}</button>
                 ) : null}
-                <span className="ms-nc-count">{n.goalCount({ n: goal.length, max: GOAL_MAX })}</span>
+                {goal.length >= GOAL_MAX * GOAL_COUNT_FROM ? (
+                  <span className={cx('ms-nc-count', goal.length >= GOAL_MAX && 'ms-nc-count-full')} role="status">{n.goalCount({ n: goal.length, max: GOAL_MAX })}</span>
+                ) : null}
               </div>
             </div>
             {goalError ? <p id="ms-nc-goal-err" className="ms-nc-err"><Icon name="warn" size={13} />{n.goalRequired}</p> : null}

@@ -65,9 +65,11 @@
   field-sizing: content; min-height: 4lh; max-height: 50vh; overflow-y: auto;
 }
 .ms-nc-goalbox textarea::placeholder { color: var(--faint); }
-.ms-nc-goalbar { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ms-nc-goalbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.ms-nc-goalbar > * { max-width: 100%; min-width: 0; }
 .ms-nc-kit { height: 26px; padding: 0 9px 0 4px; border-radius: 7px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); gap: 6px; }
 .ms-nc-mono { width: 18px; height: 18px; border-radius: 4px; background: var(--ink); color: var(--inkText); font-size: 8px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ms-nc-count.ms-nc-count-full { color: var(--warn); }
 .ms-nc-count { margin-left: auto; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ms-nc-err { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--warn); }
 .ms-nc-err svg, .ms-nc-note svg { flex: none; }

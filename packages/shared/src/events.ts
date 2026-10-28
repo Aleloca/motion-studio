@@ -302,6 +302,8 @@ export interface WorkspaceInfo {
   path: string | null;
   settings: WorkspaceSettingsView | null;
   error: WorkspaceProblem | null;
+  /** The folder the first-run setup suggests when none is configured: `<home>/MotionStudio` with the platform's separator. */
+  suggestedPath?: string;
 }
 
 /** GET /api/projects/:slug. `jobKey` is the key of this project's agent jobs (to find an active one). */

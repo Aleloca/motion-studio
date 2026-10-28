@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, EMPTY_BRAND_KIT, type AssetEntry } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, DEFAULT_FORMATS, EMPTY_BRAND_KIT, type AssetEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 import { ShellContext, type Shell } from '../src/shell/ShellContext.tsx';
@@ -563,6 +563,23 @@ describe('NewCreative · English', () => {
     expect(screen.getByText(/^2 formats · 1 video render \+ 1 image$/)).toBeTruthy();
     await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Post 1:1/ }));
     expect(screen.getByText(/^1 format · 1 image$/)).toBeTruthy();
+  });
+});
+
+describe('NewCreative · brief counter (decision 1967)', () => {
+  const MAX = BRIEF_TEXT_MAX;
+  const count = (root: HTMLElement) => root.querySelector('.ms-nc-count');
+  it('is hidden while empty and below 90% of the limit, shown from 90% and marked at the limit', async () => {
+    const { container } = render(<I18nProvider locale="it"><ShellContext.Provider value={shell('Acme')}><NewCreative slug="acme" /></ShellContext.Provider></I18nProvider>);
+    await board();
+    expect(count(container)).toBeNull();
+    fireEvent.change(brief(), { target: { value: 'a'.repeat(Math.floor(MAX * 0.9) - 1) } });
+    expect(count(container)).toBeNull();
+    fireEvent.change(brief(), { target: { value: 'a'.repeat(Math.ceil(MAX * 0.9)) } });
+    expect(count(container)!.textContent).toBe(`${Math.ceil(MAX * 0.9).toLocaleString('it-IT')} / ${MAX.toLocaleString('it-IT')}`);
+    expect(count(container)!.classList.contains('ms-nc-count-full')).toBe(false);
+    fireEvent.change(brief(), { target: { value: 'a'.repeat(MAX) } });
+    expect(count(container)!.classList.contains('ms-nc-count-full')).toBe(true);
   });
 });
 

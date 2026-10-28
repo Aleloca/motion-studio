@@ -48,7 +48,7 @@ import { registerSettingsRoutes } from './settings-routes.ts';
 import { defaultChromeInstaller, registerRenderEngineRoutes, type ChromeInstaller } from './render-engine-routes.ts';
 import { registerSetupRoutes } from './setup-routes.ts';
 import type { SetupService } from '../setup/setup-service.ts';
-import { assertAgentFolders, CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
+import { assertAgentFolders, CodedError, defaultWorkspacePath, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes, type RecoverOptions } from './creative-routes.ts';
 import { noTrash, type TrashFn } from '../trash.ts';
 import { registerFontsRoutes } from './fonts-routes.ts';
@@ -611,11 +611,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/api/agent/capabilities', async (): Promise<AgentCapabilities> => capabilitiesFor(await claudeVersion(), await agentOptIn()));
 
   app.get('/api/workspace', async (): Promise<WorkspaceInfo> => {
-    if (!workspace) return { path: workspaceProblem?.path ?? null, settings: null, error: workspaceProblem?.error ?? null };
+    const suggestedPath = defaultWorkspacePath();
+    if (!workspace) return { path: workspaceProblem?.path ?? null, settings: null, error: workspaceProblem?.error ?? null, suggestedPath };
     try {
-      return { path: workspace.root, settings: await workspace.readSettings(), error: null };
+      return { path: workspace.root, settings: await workspace.readSettings(), error: null, suggestedPath };
     } catch (err) {
-      return { path: workspace.root, settings: null, error: describeWorkspaceProblem(err) };
+      return { path: workspace.root, settings: null, error: describeWorkspaceProblem(err), suggestedPath };
     }
   });
 

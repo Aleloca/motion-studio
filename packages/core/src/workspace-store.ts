@@ -4,6 +4,7 @@ import { access, chmod, constants, lstat, mkdir, readdir, readFile, realpath, re
 import { HELD_FIELDS, heldOf, SettingsHoldError, tightenHeld, type HeldSettings, type SettingsHoldStore } from './settings-hold.ts';
 import { homedir } from 'node:os';
 import * as platformPath from 'node:path';
+import { posix, win32 } from 'node:path';
 import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   type WorkspaceProblemCode,
@@ -562,4 +563,12 @@ export class WorkspaceStore {
       return parsed.data;
     });
   }
+}
+
+/**
+ * The folder the first-run setup suggests for the workspace: `MotionStudio` in the user's home, written with the
+ * platform's own separator (Windows `C:\Users\<name>\MotionStudio`). Decision 1962.
+ */
+export function defaultWorkspacePath(home: string = homedir(), platform: NodeJS.Platform = process.platform): string {
+  return (platform === 'win32' ? win32 : posix).join(home, 'MotionStudio');
 }

@@ -400,11 +400,13 @@ function WorkspaceStep({ workspace, checks, onRecheck, onBack, onSaved, primary 
   const t = useT();
   const w = t.web.welcome;
   const serverPath = workspace?.path ?? null;
-  const [path, setPath] = useState(serverPath ?? '');
+  const suggested = workspace?.suggestedPath ?? null;
+  const [path, setPath] = useState(serverPath ?? suggested ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The configured path usually arrives after mount: prefill it unless the user already typed something.
-  useEffect(() => { if (serverPath) setPath((p) => p || serverPath); }, [serverPath]);
+  // With none configured, the field starts on the suggested folder (decision 1962).
+  useEffect(() => { const start = serverPath ?? suggested; if (start) setPath((p) => p || start); }, [serverPath, suggested]);
   const trimmed = path.trim();
   const current = Boolean(serverPath) && trimmed === serverPath;
 
@@ -446,7 +448,7 @@ function WorkspaceStep({ workspace, checks, onRecheck, onBack, onSaved, primary 
   if (error) status = <p role="alert" className="ms-ws-status ms-warn"><Icon name="warn" size={12} />{error}</p>;
   else if (current && workspace?.error) status = <p role="alert" className="ms-ws-status ms-warn"><Icon name="warn" size={12} />{problemText(workspace.error, serverPath!, w)}</p>;
   else if (inUse) status = <p className="ms-ws-status ms-ok"><Icon name="check" size={12} strokeWidth={2} />{projects ? w.statusCurrent({ count: projects.length }) : w.statusChecking}</p>;
-  else status = <p className="ms-ws-status">{w.statusNew}</p>;
+  else status = <p className="ms-ws-status">{!serverPath && suggested && trimmed === suggested ? w.statusSuggested : w.statusNew}</p>;
 
   const shownProjects = (projects ?? []).slice(0, PREVIEW_PROJECTS);
   return (
@@ -465,7 +467,7 @@ function WorkspaceStep({ workspace, checks, onRecheck, onBack, onSaved, primary 
           <div className="ms-ws-input">
             <Icon name="folder" size={15} />
             <Input id="ms-ws-path" className="ms-mono" value={path} spellCheck={false} autoComplete="off"
-              placeholder={w.pathPlaceholder} aria-invalid={error ? true : undefined}
+              aria-invalid={error ? true : undefined}
               onChange={(e) => { setPath(e.target.value); setError(null); }} />
           </div>
           {bridge ? <Button variant="outline" size="lg" disabled={busy} onClick={() => void choose()}>{t.web.common.chooseFolder}</Button> : null}
@@ -474,7 +476,7 @@ function WorkspaceStep({ workspace, checks, onRecheck, onBack, onSaved, primary 
       </div>
       {trimmed ? (
         <div className="ms-ws-preview" aria-label={w.preview} role="group">
-          <div className="ms-ws-root">{trimmed.replace(/\/+$/, '')}/</div>
+          <div className="ms-ws-root">{trimmed.replace(/[\\/]+$/, '')}{trimmed.includes('\\') && !trimmed.includes('/') ? '\\' : '/'}</div>
           {shownProjects.map((slug) => (
             <div key={slug}>├─ <span className="ms-ws-name">{slug}/</span> <span className="ms-faint">· {PROJECT_DIRS}</span></div>
           ))}
