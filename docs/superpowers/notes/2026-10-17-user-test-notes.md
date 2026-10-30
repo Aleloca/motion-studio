@@ -712,6 +712,15 @@ arrives and worked on later together.
     bridge's protected-path check catches backslash Glob patterns; an internal analysis failure shows a translated line.
     Open: the `/c/...` rules are from the docs, never checked live on Windows (lowercase drive letter; UNC paths only get
     `/` for `\`): try one deny rule on a real Windows machine.
+96. **"Nothing generated yet" card while the variants generate (2026-10-30, the colleague's test).** The canvas showed
+    the card with Generate over the boards, again and again, while A–D worked with nothing saved: it looked only at the
+    open variant's own turn. Done (decisions 1983-1985): the card shows only when this variant has no version and no turn
+    of the group works, waits or is queued (a group partly started keeps its Generate for the empty variants).
+97. **The group chat was not in time order (2026-10-30).** With A and B working, A's later messages and approvals went
+    inside A's block, above B. Done (decisions 1986-1990): overlapping variant turns split into segments in time order,
+    each with its variant chip (same-variant items merged, tool steps stay under their variant's last message); approval
+    cards sit at their time, never inside a folded row; same order after reload. Open: live events use the page clock,
+    approvals the core clock, so a live event can sit a few ms off until reload.
 - **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
   Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
   Verified (0.1.1, 2026-10-27): the first try got a 404 on PUT (npm fell back to setup-node's placeholder token); after
