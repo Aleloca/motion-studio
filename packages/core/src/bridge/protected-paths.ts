@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
+import * as platformPath from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 /**
  * The path arguments of Claude Code's file tools that a permission prompt can carry: Read/Edit/Write/MultiEdit (`file_path`),
@@ -68,6 +69,38 @@ const under = (p: string, root: string) => {
   return a === r || a.startsWith(r + sep);
 };
 
+/** The parts of a platform path module `globFull` needs (injectable: tests pass `path.win32`). */
+export type GlobPathParts = Pick<typeof platformPath.win32, 'sep' | 'normalize' | 'dirname'>;
+
+/**
+ * Decision 1979: on Windows `\` is a separator like `/` (Claude Code accepts both), and `normalize` writes `\`: the pattern
+ * and the roots are compared with `/` only, or a pattern into a protected folder would be one segment that matches nothing.
+ * (A `\` meant as a glob escape is read as a separator too: that only ever denies more.) POSIX: unchanged.
+ */
+const slashed = (p: string, P: Pick<GlobPathParts, 'sep'> = platformPath) => (P.sep === '\\' ? p.replace(/\\/g, '/') : p);
+
+/**
+ * The absolute Glob pattern `joined` with `.`/`..` resolved, `/`-separated, as `patternReaches` compares it.
+ * A `..` after a wildcard segment (or a brace segment that can expand to `..`, e.g. `{..,x}`) can land anywhere under
+ * the literal folder before the wildcard, raised by one level per such segment: read as `<that folder>/**`. Otherwise
+ * `..` and `.` are resolved (absolute patterns too) before the segments are compared.
+ * A brace group is one segment even when its alternatives hold `/` (`{a/..,b}`, `{../..,x}`); every `..` written inside it
+ * counts as a climb (an over-count only widens the refusal).
+ */
+export function globFull(joinedRaw: string, P: GlobPathParts = platformPath): string {
+  const joined = slashed(joinedRaw, P);
+  const parts = splitOutsideBraces(joined);
+  const firstWild = parts.findIndex((seg) => /[*?[\]{}]/.test(seg));
+  const climbs = (seg: string) => (seg === '..' ? 1 : seg.includes('{') ? (seg.match(/(?<=^|[{,/])\.\.(?=$|[},/])/g)?.length ?? 0) : 0);
+  const ups = firstWild === -1 ? 0 : parts.slice(firstWild).reduce((n, seg) => n + climbs(seg), 0);
+  if (ups > 0) {
+    let prefix = P.normalize(parts.slice(0, firstWild).join('/') || '/');
+    for (let i = 0; i < ups; i++) prefix = P.dirname(prefix);
+    return `${slashed(prefix, P).replace(/\/$/, '')}/**`;
+  }
+  return slashed(P.normalize(joined), P);
+}
+
 /** `p` with every symlink of its longest existing ancestor resolved (the rest appended as written). */
 async function realish(p: string): Promise<string> {
   const rest: string[] = [];
@@ -106,29 +139,15 @@ export async function namesProtectedPath(toolName: string, input: Record<string,
   if (toolName === 'Glob' && typeof input.pattern === 'string' && input.pattern !== '' && !input.pattern.includes('\0')) {
     const base = typeof input.path === 'string' && input.path !== '' ? resolve(cwd, tilde(input.path)) : cwd;
     const joined = isAbsolute(tilde(input.pattern)) ? tilde(input.pattern) : `${base}/${input.pattern}`;
-    // A `..` after a wildcard segment (or a brace segment that can expand to `..`, e.g. `{..,x}`) can land anywhere under
-    // the literal folder before the wildcard, raised by one level per such segment: read as `<that folder>/**`. Otherwise
-    // `..` and `.` are resolved (absolute patterns too) before the segments are compared.
-    // A brace group is one segment even when its alternatives hold `/` (`{a/..,b}`, `{../..,x}`); every `..` written inside it
-    // counts as a climb (an over-count only widens the refusal).
-    const parts = splitOutsideBraces(joined);
-    const firstWild = parts.findIndex((seg) => /[*?[\]{}]/.test(seg));
-    const climbs = (seg: string) => (seg === '..' ? 1 : seg.includes('{') ? (seg.match(/(?<=^|[{,/])\.\.(?=$|[},/])/g)?.length ?? 0) : 0);
-    const ups = firstWild === -1 ? 0 : parts.slice(firstWild).reduce((n, seg) => n + climbs(seg), 0);
-    let full: string;
-    if (ups > 0) {
-      let prefix = normalize(parts.slice(0, firstWild).join('/') || '/');
-      for (let i = 0; i < ups; i++) prefix = dirname(prefix);
-      full = `${prefix.replace(/\/$/, '')}/**`;
-    } else full = normalize(joined);
+    const full = globFull(joined);
     const bases = [full];
     // The pattern's literal folder may be a symlink to the protected one.
     const literal = splitOutsideBraces(full).findIndex((seg) => /[*?[\]{}]/.test(seg));
     if (literal > 1) {
       const segs = splitOutsideBraces(full);
-      bases.push(join(await realish(segs.slice(0, literal).join('/')), ...segs.slice(literal)));
+      bases.push(slashed(join(await realish(segs.slice(0, literal).join('/')), ...segs.slice(literal))));
     }
-    if (bases.some((b) => rootForms.some((r) => patternReaches(b, r)))) return true;
+    if (bases.some((b) => rootForms.some((r) => patternReaches(b, slashed(r))))) return true;
   }
   return false;
 }

@@ -257,6 +257,7 @@ export const it: Messages = {
     analysisChanged: 'Il video è cambiato durante l\'analisi: verrà analizzato di nuovo.',
     analysisWriteLimit: 'write_video_analysis si può chiamare al massimo 5 volte per esecuzione.',
     analysisGone: 'Il video non è più negli Asset.',
+    analysisInternal: 'L\'analisi non è riuscita per un problema interno dell\'app. Riprova; se succede ancora, il dettaglio è nel log di Motion Studio.',
     analysisNothingWaits: 'Questa creatività non sta aspettando l\'analisi di un video.',
     whisperNotFound: 'Nessun Whisper trovato: installane uno o indicalo in Impostazioni → Trascrizione video.',
     whisperProbeFailed: (p) => `Questo Whisper non ha funzionato su un secondo di audio di prova: ${p.detail}`,

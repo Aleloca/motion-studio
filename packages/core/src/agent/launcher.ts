@@ -3,12 +3,13 @@ import type { Stats } from 'node:fs';
 import { chmod, lstat, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
+import { isStrictlyInside, relativeInside, type InsidePathModule } from '../path-inside.ts';
 import type { AgentEvent, WorkspaceSettings } from '@motion-studio/shared';
 import { SECRET_ENV } from '../secrets/vault.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
 import type { AgentBridge, BridgeContext } from '../bridge/bridge.ts';
-import { codebaseHasGlobChars, escapeGlob, findCodebaseSecrets, hasUnsafePathChars } from '../codebases.ts';
+import { codebaseHasGlobChars, findCodebaseSecrets, hasUnsafePathChars, ruleGlob } from '../codebases.ts';
 import { assertAgentFolders } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 import { buildAgentPolicy, sandboxPath, type AgentJobKind } from './policy.ts';
@@ -82,6 +83,8 @@ export interface LauncherDeps {
   configDir: string;
   /** Defaults to os.homedir(). */
   home?: string;
+  /** The path rules of the containment checks (decision 1976); defaults to the platform's. Tests pass `path.win32`. */
+  pathModule?: InsidePathModule;
   /** e.g. [process.execPath, '/…/server.mjs']; null disables MCP and approvals. */
   mcpCommand: string[] | null;
   /** Extra env of the MCP server process (e.g. ELECTRON_RUN_AS_NODE=1 when the command is Electron's binary). Never overrides the Motion Studio variables. */
@@ -233,16 +236,20 @@ export class AgentLauncher {
     const workspaceReal = await realpath(workspace).catch(() => workspace);
     protectedDirs.push(...[...new Set([workspace, workspaceReal, dirname(realDir)].map((d) => join(d, '.studio')))]);
     // Caller-supplied files get both spellings (plain and realpath) like the project entries.
-    const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
+    const spellings = (f: string) => {
+      // Decision 1976: platform-aware containment (on Windows `\`, `/` and case all count the same way the file system does).
+      const rel = realDir !== i.projectDir ? relativeInside(f, i.projectDir, this.deps.pathModule) : null;
+      return rel ? [f, join(realDir, rel)] : [f];
+    };
     const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => [...PROTECTED_PROJECT_FILES, RENAME_JOURNAL_FILE].map((n) => join(d, n)))];
     protectedDirs.push(...(i.protectedDirs ?? []).flatMap(spellings));
     // Spec 1485 (decision 1499): the video analyses are the core's (and the user's, from the library): no agent job writes them,
     // except the user's own console.
     if (i.kind !== 'console') protectedDirs.push(...roots.map((d) => join(d, 'assets', '.analysis')));
     const logGlobs = roots.flatMap((d) => [
-      ...CREATIVE_CORE_FILES.map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`),
-      `${escapeGlob(join(d, 'creatives'))}/*/${CREATIVE_CORE_COPY_GLOB}`,
-      `${escapeGlob(join(d, 'brand', 'proposals'))}/*/${PROPOSAL_LOG}`,
+      ...CREATIVE_CORE_FILES.map((n) => `${ruleGlob(join(d, 'creatives'))}/*/${n}`),
+      `${ruleGlob(join(d, 'creatives'))}/*/${CREATIVE_CORE_COPY_GLOB}`,
+      `${ruleGlob(join(d, 'brand', 'proposals'))}/*/${PROPOSAL_LOG}`,
     ]);
     // Sandbox denyWrite: the concrete files that exist now (plus this job's own creative) work everywhere. macOS also
     // expands globs there (seatbelt regex), Linux/WSL skip them, so the globs are added too. Any `[ ] * ?` in a path makes
@@ -400,7 +407,8 @@ export class AgentLauncher {
       }
       // Decision 1541: a video analysis runs in its frames' folder, so the project is not its working folder (whose reads
       // Claude Code allows without asking): any read outside the frames reaches the permission prompt, which refuses it.
-      const framesCwd = i.kind === 'video-analysis' ? (i.readDirs ?? []).find((d) => d.startsWith(`${i.projectDir}/`)) : undefined;
+      // Decision 1976: inside the project as the platform reads paths (a Windows project's frames are `C:\…\proj\assets\…`).
+      const framesCwd = i.kind === 'video-analysis' ? (i.readDirs ?? []).find((d) => isStrictlyInside(d, i.projectDir, this.deps.pathModule)) : undefined;
       if (i.kind === 'video-analysis' && !framesCwd) throw new Error('a video analysis needs its frames folder inside the project');
       const run = this.deps.runner.start({
         cwd: framesCwd ?? i.projectDir, ...i.request,

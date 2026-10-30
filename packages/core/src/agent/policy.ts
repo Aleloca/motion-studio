@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { dirDenyRules, escapeGlob, fileDenyRules, globDenyRules, readOnlyRules, secretReadRules, secretSandboxGlobs } from '../codebases.ts';
+import { dirDenyRules, fileDenyRules, globDenyRules, readOnlyRules, ruleGlob, secretReadRules, secretSandboxGlobs } from '../codebases.ts';
 import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, BRAND_CODEBASE_DENIED_TOOLS, BRAND_CODEBASE_SCOPED_TOOLS, DESCRIBE_TOOLS, LOCALIZE_TOOLS } from './runner.ts';
 import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } from './sandbox.ts';
 
@@ -61,7 +61,7 @@ export interface PolicyInput {
  * folded forms are for the deny rules only. The project stays readable as the working folder; anything else reaches an
  * approval card, as before Phase 14.
  */
-export const codebaseReadAllowRules = (codebases: string[]): string[] => codebases.flatMap((c) => BRAND_CODEBASE_SCOPED_TOOLS.map((t) => `${t}(/${escapeGlob(c)}/**)`));
+export const codebaseReadAllowRules = (codebases: string[]): string[] => codebases.flatMap((c) => BRAND_CODEBASE_SCOPED_TOOLS.map((t) => `${t}(/${ruleGlob(c)}/**)`));
 export interface AgentPolicy { settings: Record<string, unknown> | null; allowedTools: string[]; disallowedTools: string[]; addDirs: string[];
   /** Extra environment of the agent process: package caches inside the project, only for sandboxed jobs. */
   env: Record<string, string>;
@@ -159,9 +159,9 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
   // With codebases the brand tools keep only WebFetch, and only with a website source: Bash(mkdir/ffprobe) are dropped.
   // Phase 3 of the single agent (review minor 1): the coordinator reads the project without asking, nothing else (a read
   // elsewhere reaches the permission prompt, which refuses it for this kind).
-  const coordinatorReads = i.kind === 'creative-group' && i.projectDir ? COORDINATOR_TOOLS.map((t) => `${t}(/${escapeGlob(i.projectDir!)}/**)`)
+  const coordinatorReads = i.kind === 'creative-group' && i.projectDir ? COORDINATOR_TOOLS.map((t) => `${t}(/${ruleGlob(i.projectDir!)}/**)`)
     // Decision 1493: a video analysis reads its frames' folders without asking, nothing else.
-    : i.kind === 'video-analysis' ? (i.readDirs ?? []).map((d) => `Read(/${escapeGlob(d)}/**)`)
+    : i.kind === 'video-analysis' ? (i.readDirs ?? []).map((d) => `Read(/${ruleGlob(d)}/**)`)
       // Task 23: a subtitle translation reads nothing.
       : i.kind === 'subtitles-translate' ? [] : null;
   const kindTools = (list: readonly string[]) => (coordinatorReads ?? (brandCodebases ? (i.brandWebsite ? list.filter((t) => t === 'WebFetch') : []) : list));
