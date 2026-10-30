@@ -2,10 +2,11 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, readdir, readFile, readlink, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import * as platformPath from 'node:path';
 import { basename, isAbsolute, join, normalize, parse, relative } from 'node:path';
 import { isSecretPath, SECRET_PATTERNS, type LinkedCodebase } from '@motion-studio/shared';
 import { messages, type Locale } from '@motion-studio/shared';
-import { codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, expandHome, normalizeCodebaseList, normalizeCodebasePath, pathHasGlobChars } from './workspace-store.ts';
+import { codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, expandHome, normalizeCodebaseList, normalizeCodebasePath, pathHasGlobChars, samePathName, trimTrailingSeparators } from './workspace-store.ts';
 import { currentLocale } from './i18n.ts';
 import { sensitiveHomeEntries } from './agent/sandbox.ts';
 
@@ -49,10 +50,24 @@ export async function agentCodebases(list: LinkedCodebase[], forbidden: string[]
 /** Claude Code permission rule syntax: an absolute path is written with a leading '//'. */
 /** Glob metacharacters in the path are escaped so a folder like `cb [x]` or `app {a,b}` is matched literally. */
 export const escapeGlob = (p: string) => p.replace(/[\\[\]*?{}()!+@]/g, '\\$&');
-export const dirDenyRules = (tools: string[], dirs: string[]) => dirs.flatMap((d) => tools.map((t) => `${t}(/${escapeGlob(d)}/**)`));
+/**
+ * Decision 1977: an absolute path in the POSIX form Claude Code matches its rules against. On Windows Claude Code turns
+ * `C:\Users\alice` into `/c/Users/alice` before matching (code.claude.com/docs/en/permissions, "On Windows, paths are
+ * normalized to POSIX form"): a rule written with the drive and `\` never matched, so the deny rules (protected files, the
+ * config folder, sensitive home entries) did nothing there. Any other Windows path only gets `/` for `\`. POSIX: unchanged.
+ */
+export function rulePathForm(p: string, P: Pick<typeof platformPath.win32, 'sep'> = platformPath): string {
+  if (P.sep !== '\\') return p;
+  const slashed = p.replace(/\\/g, '/');
+  const drive = /^([A-Za-z]):(?:\/|$)/.exec(slashed);
+  return drive ? `/${drive[1]!.toLowerCase()}${slashed.slice(2)}` : slashed;
+}
+/** An absolute path as the literal part of a permission rule: POSIX form (rulePathForm), glob characters escaped. */
+export const ruleGlob = (p: string, P: Pick<typeof platformPath.win32, 'sep'> = platformPath) => escapeGlob(rulePathForm(p, P));
+export const dirDenyRules = (tools: string[], dirs: string[]) => dirs.flatMap((d) => tools.map((t) => `${t}(/${ruleGlob(d)}/**)`));
 export const readOnlyRules = (paths: string[]) => dirDenyRules(['Edit'], paths);
 /** Deny rules for each tool on each exact absolute file path (same escaping as readOnlyRules). */
-export const fileDenyRules = (tools: string[], files: string[]) => files.flatMap((f) => tools.map((t) => `${t}(/${escapeGlob(f)})`));
+export const fileDenyRules = (tools: string[], files: string[]) => files.flatMap((f) => tools.map((t) => `${t}(/${ruleGlob(f)})`));
 
 /** Deny rules for each tool on a glob over absolute paths; the caller escapes the literal parts (`escapeGlob`) and leaves the wildcards. */
 export const globDenyRules = (tools: string[], globs: string[]) => globs.flatMap((g) => tools.map((t) => `${t}(/${g})`));
@@ -182,7 +197,7 @@ const FOLDED_SUFFIXES = secretSuffixes(true);
  */
 export function secretReadRules(path: string): string[] {
   if (hasUnsafePathChars(path)) return [];
-  const root = escapeGlob(path);
+  const root = ruleGlob(path);
   const folded = caseFoldGlob(root);
   return [
     ...EXACT_SUFFIXES.map((s) => `Read(/${root}/**/${s})`),
@@ -290,11 +305,12 @@ export interface BrandCodebaseChecks {
 
 export async function resolveBrandCodebase(raw: string, protectedDirs: string[], checks: BrandCodebaseChecks = {}): Promise<BrandCodebase | { problem: BrandCodebaseProblem }> {
   if (hasUnsafePathChars(raw)) return { problem: 'unsafe-path' };
-  const home = homedir().replace(/\/+$/, '');
+  const home = trimTrailingSeparators(homedir());
   const expanded = normalize(expandHome(raw.trim()));
   if (!isAbsolute(expanded)) return { problem: 'not-absolute' };
-  if (expanded.replace(/\/+$/, '') === '') return { problem: 'disk-root' };
-  if (expanded.replace(/\/+$/, '') === home) return { problem: 'home' };
+  // Decision 1978: `C:\` and `C:\Users\me\` on Windows too (both separators, the home without case).
+  if (trimTrailingSeparators(expanded) === '') return { problem: 'disk-root' };
+  if (samePathName(trimTrailingSeparators(expanded), home)) return { problem: 'home' };
   const path = normalizeCodebasePath(raw);
   // Decision 781: the agent's rules cannot match a path with glob characters (decision 780), under either spelling.
   if (pathHasGlobChars(path)) return { problem: 'glob-chars' };

@@ -13,7 +13,8 @@ import type { Git } from '../git.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import type { MediaTools } from '../media/media-tools.ts';
-import { assertAgentFolders } from '../workspace-store.ts';
+import { ProjectQuarantinedError } from '../project-integrity.ts';
+import { assertAgentFolders, WorkspaceError } from '../workspace-store.ts';
 import { buildAnalysisPrompt } from './analysis-prompt.ts';
 import { extractWav, silenceRatio } from './audio.ts';
 import { detectScenes, extractFrames, planFrames } from './frames.ts';
@@ -97,6 +98,18 @@ const fileKey = (ref: ProjectRef, file: string) => `${ref.root}\0${ref.projectSl
 const shaKey = (ref: ProjectRef, sha: string) => videoAnalysisJobKey(ref.root, ref.projectSlug, sha);
 const isVideoAsset = (file: string) => file.startsWith('assets/') && !file.startsWith('assets/.') && assetKindOf(file) === 'video';
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** Decision 1980: a failure whose message is written for the user (translated); the analysis panel shows only these. */
+class AnalysisFailure extends Error {}
+/**
+ * What the library and the job say about a failed analysis: the message of a failure written for the user (this module's,
+ * the agent run's, a refused folder, a quarantined project); anything else is internal (an English check, a file system
+ * error) and gets a plain translated line, its detail kept in the log (user report 95).
+ */
+function shownText(e: unknown, file: string): string {
+  if (e instanceof AnalysisFailure || e instanceof WorkspaceError || e instanceof ProjectQuarantinedError) return e.message;
+  console.warn(`Motion Studio: the video analysis of ${file} failed: ${errText(e)}`);
+  return t().errors.analysisInternal;
+}
 const abortedError = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
 
 /**
@@ -151,7 +164,7 @@ export class VideoAnalysisService {
     const out: VideoAnalysisView[] = [];
     for (const file of [...new Set(files)].filter(isVideoAsset)) {
       try { out.push(await this.ensureOne(ref, file, o)); }
-      catch (err) { out.push(this.errorView(file, errText(err))); }
+      catch (err) { out.push(this.errorView(file, shownText(err, file))); }
     }
     return out;
   }
@@ -480,10 +493,10 @@ export class VideoAnalysisService {
       await assertAgentFolders(ref.projectDir, ref.root);
       const abs = join(ref.projectDir, primary);
       const before = await hashVideo(abs).catch(() => null);
-      if (!before) throw new Error(t().errors.analysisGone);
-      if (before.sha256 !== entry.sha) { await this.again(entry, primary); throw new Error(t().errors.analysisChanged); }
+      if (!before) throw new AnalysisFailure(t().errors.analysisGone);
+      if (before.sha256 !== entry.sha) { await this.again(entry, primary); throw new AnalysisFailure(t().errors.analysisChanged); }
       const info = await this.deps.media.probe(abs);
-      if (!info || info.durationSec === null) throw new Error(t().errors.analysisNotVideo);
+      if (!info || info.durationSec === null) throw new AnalysisFailure(t().errors.analysisNotVideo);
       const duration = info.durationSec;
       const framesRel = framesDirOf(entry.sha);
       const framesDir = join(ref.projectDir, framesRel);
@@ -507,7 +520,9 @@ export class VideoAnalysisService {
         if (await extractWav(this.ff, abs, wav, signal, duration)) {
           if ((await silenceRatio(this.ff, wav, duration, signal)) >= SILENCE_NO_SPEECH) kind = 'none-no-speech';
           else if (this.deps.transcriber && entry.transcribe !== 'none') {
-            const tr = await this.deps.transcriber.transcribe({ ref, file: primary, jobId, wav, durationSec: duration, signal, ...(entry.transcribe ? { method: entry.transcribe } : {}) });
+            // The transcriber's failures are written for the user (its own translated lines, the provider's errors): kept as they are.
+            const tr = await this.deps.transcriber.transcribe({ ref, file: primary, jobId, wav, durationSec: duration, signal, ...(entry.transcribe ? { method: entry.transcribe } : {}) })
+              .catch((err: unknown) => { throw (err as Error)?.name === 'AbortError' || signal.aborted ? err : new AnalysisFailure(errText(err)); });
             ({ kind, language } = tr);
             transcript = tr.segments;
           } else kind = 'none-skipped';
@@ -571,7 +586,7 @@ export class VideoAnalysisService {
       if (entry.cancelled || signal.aborted) return 'cancelled';
       if (written.length === 0) {
         if (keptEdit) return;
-        throw new Error(t().errors.analysisChanged);
+        throw new AnalysisFailure(t().errors.analysisChanged);
       }
       await this.deps.git.commitAll(ref.projectDir, t().videoAnalysis.commit({ file: written.map((f) => basename(f)).join(', ') })).catch((err: Error) => {
         console.warn(`Motion Studio: the video analysis could not be committed in project ${ref.projectSlug}: ${err.message}`);
@@ -579,7 +594,7 @@ export class VideoAnalysisService {
       this.deps.broadcast({ type: 'library', project: ref.projectSlug });
     } catch (err) {
       if (signal.aborted || (err as Error).name === 'AbortError') return 'cancelled';
-      const message = errText(err);
+      const message = shownText(err, primary);
       for (const f of entry.files) if (!this.failures.has(fileKey(ref, f))) this.failures.set(fileKey(ref, f), { message, sha: entry.sha });
       throw new JobFailedError(t().videoAnalysis.failed({ file: basename(primary), reason: message }));
     } finally {
@@ -625,8 +640,8 @@ export class VideoAnalysisService {
     if (i.signal.aborted) run.cancel();
     const result = await run.done.finally(() => i.signal.removeEventListener('abort', onAbort));
     if (i.signal.aborted || result.status === 'cancelled') throw abortedError();
-    if (result.status === 'failed' && !written) throw new Error(result.error ?? t().errors.analysisNoWrite);
-    if (!written) throw new Error(t().errors.analysisNoWrite);
+    if (result.status === 'failed' && !written) throw new AnalysisFailure(result.error ?? t().errors.analysisNoWrite);
+    if (!written) throw new AnalysisFailure(t().errors.analysisNoWrite);
     return written;
   }
 }

@@ -53,12 +53,28 @@ export function expandHome(path: string): string {
   return path;
 }
 
-export function normalizeCodebasePath(p: string): string {
-  const s = normalize(expandHome(p.trim()));
-  if (!isAbsolute(s)) throw new WorkspaceError(400, t().errors.codebaseNotAbsolute({ path: p }));
-  const stripped = s.replace(/\/+$/, '');
+/** The parts of a platform path module the codebase path checks need (injectable: tests pass `path.win32`). */
+export type CodebasePathModule = Pick<typeof platformPath.win32, 'sep' | 'normalize' | 'isAbsolute' | 'parse'>;
+
+/**
+ * Decision 1978: `p` (absolute) without its trailing separators, '' for a disk root (`/`, `C:\`, `C:/`). On Windows both
+ * `/` and `\` are separators; POSIX strips only `/` as before.
+ */
+export function trimTrailingSeparators(p: string, P: CodebasePathModule = platformPath): string {
+  if (P.sep === '\\' && P.parse(p).root === p && P.isAbsolute(p)) return '';
+  return P.sep === '\\' ? p.replace(/[\\/]+$/, '') : p.replace(/\/+$/, '');
+}
+
+/** Same folder name for the platform: Windows compares paths without case (as its file system does). */
+export const samePathName = (a: string, b: string, P: Pick<CodebasePathModule, 'sep'> = platformPath) =>
+  (P.sep === '\\' ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+export function normalizeCodebasePath(p: string, P: CodebasePathModule = platformPath, home: string = homedir()): string {
+  const s = P.normalize(expandHome(p.trim()));
+  if (!P.isAbsolute(s)) throw new WorkspaceError(400, t().errors.codebaseNotAbsolute({ path: p }));
+  const stripped = trimTrailingSeparators(s, P);
   if (!stripped) throw new WorkspaceError(400, t().errors.codebaseDiskRoot);
-  if (stripped === homedir().replace(/\/+$/, '')) throw new WorkspaceError(400, t().errors.codebaseHome);
+  if (samePathName(stripped, trimTrailingSeparators(home, P), P)) throw new WorkspaceError(400, t().errors.codebaseHome);
   return stripped;
 }
 

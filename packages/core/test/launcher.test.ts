@@ -1,7 +1,7 @@
 import { existsSync, linkSync, readFileSync } from 'node:fs';
 import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workspaceSettingsSchema, type AgentEvent } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -843,6 +843,36 @@ describe('a video analysis launch (decision 1493)', () => {
     await run.done;
     const lines = (await readFile(join(projectDir, '.studio', 'usage.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { kind: string; jobId: string });
     expect(lines.at(-1)).toMatchObject({ kind: 'video-analysis', jobId: 'v1' });
+  });
+});
+
+describe('a video analysis on Windows paths (user report 95, decision 1976)', () => {
+  // The launcher runs on this machine's files; only the containment rules are Windows' (`path.win32`): the project folder is
+  // written with `\` and another case in the frames' folder, as a Windows core would get it.
+  const winFrames = (projectDir: string) => `${projectDir.toUpperCase().replaceAll('/', '\\')}\\.studio/cache\\analysis\\${'ab'.repeat(32)}`;
+  const scopeOf = (projectDir: string) => ({ root: dirname(projectDir), projectSlug: 'acme', projectDir, file: 'assets/clip.mp4', sha256: 'ab'.repeat(32), pass: 'whole' as const, from: 0, to: 8, frames: ['f-00000000.jpg'], write: () => {} });
+
+  it('frames inside the project under backslashes, slashes and another case: the run starts in the frames folder', async () => {
+    const { ControlledRunner } = await import('./helpers/controlled-runner.ts');
+    const projectDir = await newProject();
+    const runner = new ControlledRunner();
+    const launcher = testLauncher(runner, { pathModule: win32 });
+    const frames = winFrames(projectDir);
+    const run = await launcher.start({ kind: 'video-analysis', jobId: 'v1', projectSlug: 'acme', projectDir, readDirs: [frames], videoAnalysisScope: scopeOf(projectDir), request: { prompt: 'x' }, onEvent: () => {} });
+    expect(runner.runs[0]!.req.cwd).toBe(frames);
+    runner.runs[0]!.finish({ write: false });
+    await run.done;
+  });
+
+  it('a sibling folder that only shares the prefix (`proj2` for `proj`) is still refused (decision 1541)', async () => {
+    const { ControlledRunner } = await import('./helpers/controlled-runner.ts');
+    const projectDir = await newProject();
+    const runner = new ControlledRunner();
+    const launcher = testLauncher(runner, { pathModule: win32 });
+    const sibling = `${projectDir.replaceAll('/', '\\')}2\\frames`;
+    await expect(launcher.start({ kind: 'video-analysis', jobId: 'v2', projectSlug: 'acme', projectDir, readDirs: [sibling], videoAnalysisScope: scopeOf(projectDir), request: { prompt: 'x' }, onEvent: () => {} }))
+      .rejects.toThrow('a video analysis needs its frames folder inside the project');
+    expect(runner.runs).toHaveLength(0);
   });
 });
 

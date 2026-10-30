@@ -195,6 +195,29 @@ describe('VideoAnalysisService with a stub ffmpeg', () => {
     expect(existsSync(wavs[0]!)).toBe(false);
   });
 
+  it('an internal failure shows a plain translated line in the library, its detail only in the log (user report 95)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // Scene detection fails: frames.ts throws its English "scene detection failed (1)".
+      const failing: CommandExec = async () => ({ code: 1, stdout: '', stderr: 'boom', notFound: false });
+      const t = await analysisApp({ media: longMedia(20), ffExec: failing });
+      const h = analysisHelpers(t);
+      const file = await h.put('clip.mp4', 'fake video');
+      const [v] = await t.analyses.ensure(t.ref, [file], { from: 'library' });
+      await t.analyses.settled(v!.jobId!);
+      const view = await t.analyses.view(t.ref, file);
+      expect(view.state).toBe('error');
+      expect(view.error).toBe(it_.errors.analysisInternal);
+      expect(view.error).not.toContain('scene detection');
+      const job = (await h.analysisJobs())[0] as { state: string; error?: string };
+      expect(job.state).toBe('failed');
+      expect(JSON.stringify(job)).not.toContain('scene detection');
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('scene detection failed (1)') && String(c[0]).includes(file))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('a long video waits for confirmation, then follows the reduced plan', async () => {
     const t = await analysisApp({ media: longMedia(1300), ffExec: stubFf([]) });
     const h = analysisHelpers(t);
