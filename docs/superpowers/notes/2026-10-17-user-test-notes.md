@@ -704,6 +704,14 @@ arrives and worked on later together.
     no variant has a version and no turn works or waits; the "all" box keeps one send button; the core skips a first
     generation (request null) for a variant that works, waits or has a version. In the format view and the editor the
     other members' versions are not known, only their turns: the core's skip is the second lock there.
+95. **Video analysis fails on Windows (2026-10-30, the colleague's test).** The asset panel showed "Errore" and the raw
+    "a video analysis needs its frames folder inside the project": the launcher tested `${projectDir}/` as a prefix, never
+    true with `\` paths. Done (decisions 1976-1982): one containment helper (`path-inside.ts`, win32-aware: separators,
+    case, drives) for the launcher; permission rules written in the `/c/...` form the Claude Code docs give for Windows
+    (before, no absolute-path deny rule matched there); the codebase checks refuse the disk root and home on Windows; the
+    bridge's protected-path check catches backslash Glob patterns; an internal analysis failure shows a translated line.
+    Open: the `/c/...` rules are from the docs, never checked live on Windows (lowercase drive letter; UNC paths only get
+    `/` for `\`): try one deny rule on a real Windows machine.
 - **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
   Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
   Verified (0.1.1, 2026-10-27): the first try got a 404 on PUT (npm fell back to setup-node's placeholder token); after
