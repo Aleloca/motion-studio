@@ -782,7 +782,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
                   self={groupChat.self} memberJobs={groupChat.memberJobs}
                   single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
               pins={pins} onRemovePin={removePin} onEditPin={onEditChip} formatName={formatLabel}
-              canGenerate={canGenerateChat({ versions: versions.length, job: chatJob, memberJobs: groupChat.memberJobs })} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} appliesTo={appliesTo}
+              canGenerate={canGenerateChat({ versions: versions.length, job: chatJob, memberJobs: groupChat.memberJobs, statuses: [detail.creative.status], queued: detail.creative.queued?.length ?? 0 })} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} appliesTo={appliesTo}
               brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
               versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} />
           ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>}

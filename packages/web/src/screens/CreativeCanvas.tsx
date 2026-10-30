@@ -50,7 +50,7 @@ import { isVideoFile } from '../media.ts';
 import { usePinFrames } from './pinFrames.ts';
 import { rangeSeconds } from './pinModel.ts';
 import { retryTurn } from './creativeState.ts';
-import { canGenerateChat, chatTick, useGroupChat } from './variants/useGroupChat.ts';
+import { canGenerateChat, chatTick, chatTurnsIdle, useGroupChat, type ChatTurns } from './variants/useGroupChat.ts';
 import { AddVariantDialog, EditDirectionDialog, type BaseChoice } from './variants/AddVariantDialog.tsx';
 import { FinalSelection, type ChooserFormat } from './variants/FinalSelection.tsx';
 import { GroupStar } from './variants/GroupStar.tsx';
@@ -189,6 +189,18 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const chatJob = groupChat.single ? groupChat.groupJob : job;
   // Per board: a targeted job renders its formats and their followers only (spec §2.5).
   const rendering = useMemo(() => renderingOf(job, states), [job, states]);
+  // Report 96 (decisions 1983-1985): the chat's Generate and the canvas's "nothing generated yet" card read the same turns,
+  // computed once: no turn of the group works, waits or is queued (this page's, the group turn, any member's, in `live.jobs`
+  // or as the creatives' own status and queues, which cover the gap between two turns). The chat's Generate also needs a
+  // group with no version anywhere (decision 1971); the card only this variant's, its Genera starting the empty ones.
+  const memberDetails = Object.values(members);
+  const chatTurns: ChatTurns = {
+    versions: versions.length, job: chatJob, memberJobs: groupChat.memberJobs, memberVersions: memberDetails.map((m) => m?.versions.length ?? 0),
+    statuses: [detail?.creative.status, ...memberDetails.map((m) => m?.creative.status)],
+    queued: [detail, ...memberDetails].reduce((n, d) => n + (d?.creative.queued?.length ?? 0), 0),
+  };
+  const turnsIdle = chatTurnsIdle(chatTurns);
+  const canGenerate = canGenerateChat(chatTurns);
 
   // Boards.
   const boards = useMemo(() => {
@@ -1099,7 +1111,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             {group ? renderGroupedWorld() : renderLines(lines, (b) => board(b))}
           </div>
         </div>
-        {!versions.length && !working ? (
+        {!versions.length && turnsIdle ? (
           <div className="ms-cv-nothing">
             <div className="ms-card ms-cv-nothing-card">
               <span className="ms-cv-nothing-icon" aria-hidden="true"><Icon name="sparkle" size={16} /></span>
@@ -1124,7 +1136,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
               pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
               single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
               usageOf={(u) => <UsageBadge usage={u} billing={live.today?.billing ?? null} />}
-              canGenerate={canGenerateChat({ versions: versions.length, job: chatJob, memberJobs: groupChat.memberJobs, memberVersions: Object.values(members).map((m) => m?.versions.length ?? 0) })} onSent={({ pins: sent }) => { dropPins(sent); setViewing({}); reload(); }}
+              canGenerate={canGenerate} onSent={({ pins: sent }) => { dropPins(sent); setViewing({}); reload(); }}
               onSelectVersion={viewAll} snapshots={live.snapshots}
               appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
               self={groupChat.self} memberJobs={groupChat.memberJobs} onOpenVariant={(l) => { const m = group?.group.members.find((x) => x.letter === l); if (m) focusMember(m); }}

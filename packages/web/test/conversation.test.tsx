@@ -869,5 +869,81 @@ describe('Conversation · one chat for a variant group (decisions 980 and 982, p
     expect(screen.getByText('B continua')).toBeTruthy();
     expect(chips(screen.getByText('B continua').closest('article')!)).toEqual(['B']);
   });
-});
 
+  describe('report 97: the chat is in time order whatever variant writes (decision 1986)', () => {
+    const ja: JobSummary = { ...running, id: 'ja', key: 'creative:k' };
+    const jb: JobSummary = { ...running, id: 'jb', key: 'creative:k~b' };
+    const apA: ApprovalRequest = { ...ap, id: 'apa', jobId: 'ja', title: 'A wants to run', createdAt: at(4) };
+    const fan = (v: string): ConversationEntry => ({ ...user(0, 'Più contrasto', v), fanout: 'r1' } as ConversationEntry);
+    const said = (min: number, words: string, jobId: string, variant: string): ConversationEntry => ({ ...agent(min, text(words), jobId), variant } as ConversationEntry);
+    const markers = ['Più contrasto', 'A parte', 'B parte', 'A scrive', 'A wants to run', 'B scrive'];
+    const order = (container: HTMLElement) => [...container.querySelectorAll('.ms-convo-list > li')].map((li) => markers.find((m) => li.textContent?.includes(m))).filter(Boolean);
+    const expected = ['Più contrasto', 'A parte', 'B parte', 'A scrive', 'A wants to run', 'B scrive'];
+    const persisted = [fan('a'), fan('b'), said(1, 'A parte', 'ja', 'a'), said(2, 'B parte', 'jb', 'b'), said(3, 'A scrive', 'ja', 'a'), said(5, 'B scrive', 'jb', 'b')];
+
+    it('two variants working at once: A, B, A, A\'s card, B, the card with A\'s chip and at the bottom when it came', () => {
+      const { container } = render(view({ self: 'a', entries: persisted, approvals: [apA], memberJobs: [{ job: ja, live: [], variant: 'a' }, { job: jb, live: [], variant: 'b' }] } as Props));
+      expect(order(container)).toEqual(expected);
+      const card = container.querySelector('[data-variant="a"]')!;
+      expect(chips(card as HTMLElement)).toEqual(['A']);
+      // The fan-out request is still one bubble with both chips.
+      expect(chips(screen.getByRole('article', { name: 'You' }))).toEqual(['A', 'B']);
+    });
+
+    it('live events give the same order as the persisted entries after a reload', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const entries = [fan('a'), fan('b')];
+        const members = (a: AgentEvent[], b: AgentEvent[]) => [{ job: ja, live: a, variant: 'a' as const }, { job: jb, live: b, variant: 'b' as const }];
+        vi.setSystemTime(new Date(at(1)));
+        const { container, rerender, unmount } = render(view({ self: 'a', entries, memberJobs: members([text('A parte')], []) } as Props));
+        vi.setSystemTime(new Date(at(2)));
+        rerender(view({ self: 'a', entries, memberJobs: members([text('A parte')], [text('B parte')]) } as Props));
+        vi.setSystemTime(new Date(at(3)));
+        rerender(view({ self: 'a', entries, memberJobs: members([text('A parte'), text('A scrive')], [text('B parte')]) } as Props));
+        vi.setSystemTime(new Date(at(4)));
+        rerender(view({ self: 'a', entries, approvals: [apA], memberJobs: members([text('A parte'), text('A scrive')], [text('B parte')]) } as Props));
+        // The newest thing is the card: it is at the bottom of the flow.
+        expect(order(container).at(-1)).toBe('A wants to run');
+        vi.setSystemTime(new Date(at(5)));
+        rerender(view({ self: 'a', entries, approvals: [apA], memberJobs: members([text('A parte'), text('A scrive')], [text('B parte'), text('B scrive')]) } as Props));
+        expect(order(container)).toEqual(expected);
+        unmount();
+      } finally { vi.useRealTimers(); }
+      // The reload: the same turns read from the conversation file.
+      const again = render(view({ self: 'a', entries: persisted, approvals: [apA], memberJobs: [{ job: ja, live: [], variant: 'a' }, { job: jb, live: [], variant: 'b' }] } as Props));
+      expect(order(again.container)).toEqual(expected);
+    });
+
+    it('tool steps stay with their variant\'s segment: no A/B flip on every step', () => {
+      const step = (min: number, words: string, jobId: string, variant: string): ConversationEntry => ({ ...agent(min, { kind: 'progress', text: words }, jobId), variant } as ConversationEntry);
+      const { container } = render(view({ self: 'a', entries: [fan('a'), fan('b'), said(1, 'A parte', 'ja', 'a'), step(2, 'Passo A1', 'ja', 'a'), said(2, 'B parte', 'jb', 'b'), step(3, 'Passo A2', 'ja', 'a'), step(3, 'Passo B1', 'jb', 'b')],
+        memberJobs: [{ job: ja, live: [], variant: 'a' }, { job: jb, live: [], variant: 'b' }] } as Props));
+      const rows = [...container.querySelectorAll('.ms-convo-list > li')].map((li) => li.textContent ?? '');
+      const idx = (w: string) => rows.findIndex((r) => r.includes(w));
+      expect(idx('Passo A1')).toBeLessThan(idx('B parte'));
+      expect(idx('Passo A2')).toBeLessThan(idx('B parte'));
+      expect(idx('Passo B1')).toBeGreaterThan(idx('B parte'));
+    });
+
+    it('single agent: a helper\'s card is in time order, below the later helper rows, never inside its row', () => {
+      const g: JobSummary = { ...running, id: 'g1', key: 'group:k' };
+      const hb: JobSummary = { ...running, id: 'hb', key: 'creative:k~b', parentJobId: 'g1', variant: 'b' };
+      const hc: JobSummary = { ...running, id: 'hc', key: 'creative:k~c', parentJobId: 'g1', variant: 'c' };
+      const q: ApprovalRequest = { ...ap, id: 'qb', jobId: 'hb', creativeSlug: 'c1~b', title: 'B wants to run', createdAt: at(3) };
+      const { container } = render(view({ self: 'a', single: true, job: g, approvals: [q], entries: [
+        { type: 'user', at: at(0), text: 'B e C', pins: [], attachments: [], jobId: 'g1', group: true },
+        { type: 'agent', at: at(0), jobId: 'g1', event: text('Lavoro su B e C.'), group: true },
+        { type: 'agent', at: at(1), jobId: 'hb', event: text('Inizio B'), variant: 'b', groupJobId: 'g1' },
+        { type: 'agent', at: at(2), jobId: 'hc', event: text('Inizio C'), variant: 'c', groupJobId: 'g1' },
+      ], memberJobs: [{ job: hb, live: [], variant: 'b' }, { job: hc, live: [], variant: 'c' }] } as Props));
+      const lis = [...container.querySelectorAll('.ms-convo-list > li')];
+      const rowC = lis.findIndex((li) => li.querySelector('[data-helper="c"]'));
+      const card = lis.findIndex((li) => li.textContent?.includes('B wants to run'));
+      expect(rowC).toBeGreaterThan(-1);
+      expect(card).toBeGreaterThan(rowC);
+      expect(container.querySelector('.ms-convo-helper-card')).toBeNull();
+      expect(chips(container.querySelector('[data-variant="b"]') as HTMLElement)).toEqual(['B']);
+    });
+  });
+});

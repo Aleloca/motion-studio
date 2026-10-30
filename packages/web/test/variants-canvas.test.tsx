@@ -6,7 +6,7 @@
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, variantIdAt, type ConversationEntry, type JobSummary, type VariantGroup, type VariantId, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, variantIdAt, type ConversationEntry, type CreativeDetail, type JobSummary, type VariantGroup, type VariantId, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
@@ -26,9 +26,13 @@ const versionsBy: Record<string, VersionEntry[]> = {
   [`${HOST}~e`]: [version(1, 'Dal brief')],
 };
 const conversations: Record<string, ConversationEntry[]> = {};
+// Report 96: a member's own status and queue, as the core writes them (absent: from its versions, nothing queued).
+let statusBy: Record<string, CreativeDetail['creative']['status']> = {};
+let queuedBy: Record<string, NonNullable<CreativeDetail['creative']['queued']>> = {};
 const build = (slug: string) => {
   if (orphan) return { ...detailFor(slug, versionsBy[slug] ?? [], null), variants: { orphan: true as const, host: HOST, letter: slug.slice(-1) as VariantId } };
-  return detailFor(slug, versionsBy[slug] ?? [], group, { missing });
+  const d = detailFor(slug, versionsBy[slug] ?? [], group, { missing, ...(statusBy[slug] ? { status: statusBy[slug] } : {}) });
+  return queuedBy[slug] ? { ...d, creative: { ...d.creative, queued: queuedBy[slug] } } : d;
 };
 const reply = (slug = HOST) => build(slug);
 const api = {
@@ -102,6 +106,8 @@ beforeEach(() => {
   group = groupOf(['a', 'b', 'c']);
   missing = [];
   orphan = false;
+  statusBy = {};
+  queuedBy = {};
   versionsBy[`${HOST}~b`] = [version(1, 'Dal brief'), version(2, 'Più audace')];
   __resetPendingPins();
   localStorage.clear();
@@ -696,5 +702,54 @@ describe('variant canvas · the group never starts one variant alone', () => {
     // Open B's chat: the card is still there.
     await userEvent.click(screen.getByRole('radio', { name: 'B' }));
     expect(await screen.findByRole('group', { name: 'Servizi a pagamento per 3 varianti' })).toBeTruthy();
+  });
+});
+
+describe('variant canvas · report 96: "Ancora niente di generato" only for a group that never started', () => {
+  const saved = { ...versionsBy };
+  const empty = () => { for (const k of Object.keys(versionsBy)) versionsBy[k] = []; };
+  afterEach(() => { Object.assign(versionsBy, saved); });
+  const nothing = () => within(screen.getByRole('main')).queryByText('Ancora niente di generato');
+  const chatGenerate = () => within(document.querySelector<HTMLElement>('.ms-cv-panel')!).queryByRole('button', { name: 'Genera' });
+
+  it('a group never started: the card with its Genera', async () => {
+    empty();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    expect(await within(screen.getByRole('main')).findByText('Ancora niente di generato')).toBeTruthy();
+  });
+
+  it('the variants working (B running, C queued for a slot) with nothing saved yet: no card, no Genera in the chat', async () => {
+    empty();
+    const live = { ...emptyLive(), jobs: { jb: job(`${HOST}~b`, { id: 'jb' }), jc: job(`${HOST}~c`, { id: 'jc', state: 'queued', waitReason: 'variant-slot' }) } } as EventsState;
+    render(<Harness live={live} />);
+    await loaded();
+    await waitFor(() => expect(api.getCreative).toHaveBeenCalledWith('acme', `${HOST}~c`));
+    expect(nothing()).toBeNull();
+    expect(chatGenerate()).toBeNull();
+  });
+
+  it('a gap between two member turns (B done with nothing saved, C written "working" but not in the jobs yet): no card', async () => {
+    empty();
+    statusBy = { [`${HOST}~c`]: 'working' };
+    const live = { ...emptyLive(), jobs: { jb: job(`${HOST}~b`, { id: 'jb', state: 'failed', finishedAt: at }) } } as EventsState;
+    render(<Harness live={live} />);
+    await loaded();
+    await waitFor(() => expect(api.getCreative).toHaveBeenCalledWith('acme', `${HOST}~c`));
+    // Let the members' details land before looking.
+    await screen.findAllByText(/In lavorazione/);
+    expect(nothing()).toBeNull();
+    expect(chatGenerate()).toBeNull();
+  });
+
+  it('a request queued in a member whose turn just ended: no card', async () => {
+    empty();
+    queuedBy = { [`${HOST}~b`]: [{ clientId: 'q1', text: 'Più contrasto', pins: [], at }] };
+    const live = { ...emptyLive(), jobs: { jb: job(`${HOST}~b`, { id: 'jb', state: 'succeeded', finishedAt: at }) } } as EventsState;
+    render(<Harness live={live} />);
+    await loaded();
+    await waitFor(() => expect(api.getCreative).toHaveBeenCalledWith('acme', `${HOST}~b`));
+    await waitFor(() => expect(nothing()).toBeNull());
+    expect(chatGenerate()).toBeNull();
   });
 });

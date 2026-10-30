@@ -191,8 +191,8 @@ export interface AppliesTo {
 type Item =
   | { key: string; kind: 'user'; at: string; text: string; pins: Pin[]; state?: MessageState; redirect?: boolean; variants?: VariantId[]; context?: { codebases: string[]; assets: string[] }; files?: string[] }
   | { key: string; kind: 'agent'; at: string; text: string; summary: boolean; variant?: VariantId }
-  | { key: string; kind: 'step'; at: string; text: string }
-  | { key: string; kind: 'fold'; jobId: string; count: number; open: boolean }
+  | { key: string; kind: 'step'; at: string; text: string; variant?: VariantId }
+  | { key: string; kind: 'fold'; jobId: string; count: number; open: boolean; variant?: VariantId }
   | { key: string; kind: 'error'; at: string; text: string; variant?: VariantId }
   | { key: string; kind: 'details'; jobId: string; entries: DetailEntry[]; open: boolean }
   | { key: string; kind: 'autoline'; jobId: string; log: CommandLog }
@@ -207,7 +207,8 @@ type Item =
   | { key: string; kind: 'subtitles'; slug: string; creative: string; entry: Extract<ConversationEntry, { type: 'system' }> }
   /** `agent`: a line about something the agent did in the app with its tools (decision 917). */
   | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; agent?: boolean; variant?: VariantId; wait?: { slug: string; creative: string } }
-  | { key: string; kind: 'approval'; shown: ShownApproval }
+  /** Report 97: in a group's chat, the variant whose turn asks (its chip on the card). */
+  | { key: string; kind: 'approval'; shown: ShownApproval; variant?: VariantId }
   | { key: string; kind: 'typing' }
   | { key: string; kind: 'retried'; at: string }
   /**
@@ -299,6 +300,72 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
 }
 
 /**
+ * Report 97: where an item of a group's chat goes in time. `stream`: the turn it belongs to ('' for the conversation's own
+ * entries, already in time order); `at`: its time (ms); `sticky`: it has no place of its own and stays right after the item
+ * before it in its stream (a turn's tool steps, its folded steps, its command line and details).
+ */
+interface Placed { stream: string; at: number; sticky: boolean }
+
+/**
+ * Report 97: places a turn's items. Only what the user reads or acts on starts a segment (agent text, questions, errors,
+ * lines, messages sent during the turn): a tool step stays with the item before it, so two variants working at once do not
+ * flip A/B/A/B on every step. A step or fold that opens the turn carries the turn's chip (it starts a segment).
+ */
+function placeTurn(placed: Map<Item, Placed>, jobId: string, items: Item[], firstAt: string | undefined, variant: VariantId | undefined) {
+  const start = firstAt === undefined ? NaN : Date.parse(firstAt);
+  items.forEach((it, i) => {
+    const own = 'at' in it && typeof it.at === 'string' ? Date.parse(it.at) : NaN;
+    const sticky = i > 0 && (!Number.isFinite(own) || it.kind === 'step' || it.kind === 'fold');
+    placed.set(it, { stream: jobId, at: Number.isFinite(own) ? own : start, sticky });
+  });
+  const head = items[0];
+  if (variant && head && (head.kind === 'step' || head.kind === 'fold')) {
+    const chipped = { ...head, variant };
+    placed.set(chipped, placed.get(head)!);
+    items[0] = chipped;
+  }
+}
+
+/**
+ * Report 97 (decision 1986): a group's chat in time order. Each stream (the conversation's own entries, each turn, each card)
+ * keeps its own order; the next item is the earliest of the streams' heads (a tie: the one listed first; a card after the
+ * rest), and an item with no place of its own follows the one before it. Persisted entries carry the core's times, live
+ * events the time the page first saw them (`seenAt`), so a reload gives the same order.
+ */
+function interleave(list: readonly Item[], placed: ReadonlyMap<Item, Placed>, extra: ReadonlyArray<{ item: Item; at: number }>): Item[] {
+  interface Unit { item: Item; at: number; sticky: boolean; index: number }
+  const streams = new Map<string, Unit[]>();
+  const push = (stream: string, u: Unit) => { const l = streams.get(stream); if (l) l.push(u); else streams.set(stream, [u]); };
+  let prev = -Infinity;
+  list.forEach((item, index) => {
+    const p = placed.get(item);
+    if (p && p.stream) { push(`t:${p.stream}`, { item, at: p.at, sticky: p.sticky, index }); return; }
+    const own = p ? p.at : 'at' in item && typeof item.at === 'string' ? Date.parse(item.at) : NaN;
+    const timed = Number.isFinite(own);
+    push('', { item, at: timed ? own : prev, sticky: !timed && index > 0, index });
+    if (timed) prev = own;
+  });
+  extra.forEach((x, k) => push(`x:${k}`, { item: x.item, at: Number.isFinite(x.at) ? x.at : Infinity, sticky: false, index: list.length + k }));
+  const lists = [...streams.values()];
+  const pos = lists.map(() => 0);
+  const out: Item[] = [];
+  const total = lists.reduce((n, l) => n + l.length, 0);
+  while (out.length < total) {
+    let pick = -1;
+    for (let i = 0; i < lists.length; i++) {
+      const u = lists[i]![pos[i]!];
+      if (!u) continue;
+      const best = pick < 0 ? undefined : lists[pick]![pos[pick]!]!;
+      if (!best || u.at < best.at || (u.at === best.at && u.index < best.index)) pick = i;
+    }
+    const l = lists[pick]!;
+    out.push(l[pos[pick]!++]!.item);
+    while (pos[pick]! < l.length && l[pos[pick]!]!.sticky) out.push(l[pos[pick]!++]!.item);
+  }
+  return out;
+}
+
+/**
  * Conversation of a creative (spec §6.2 #6, visual test points 25 and 32): one message per entry with its time,
  * agent steps as compact rows with ✓ (folded once the turn is over), the result as safe Markdown, technical events
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
@@ -340,6 +407,10 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
   const outAnchor = useRef(new Map<string, number>());
   const items = useMemo(() => {
     const out: Item[] = [];
+    // Report 97 (decision 1986): a group's chat is in time order whatever variant writes: each turn's items are placed by their
+    // time among the rest (`interleave`), not as one block at the turn's first entry. A single creative's chat is as before.
+    const grouped = Boolean(variants) || (memberJobs?.length ?? 0) > 0 || entries.some((e) => e.variant !== undefined || e.groupJobId !== undefined);
+    const placed = new Map<Item, Placed>();
     const jobs = new Map<string, { at: string; event: AgentEvent }[]>();
     const firstIndex = new Map<string, number>();
     // Decision 980: the variant of each turn in a group's one chat (from its entries).
@@ -445,8 +516,10 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       const all = inserts.get(jobId) ?? [];
       const below = (x: TurnInsert) => x.anchor >= events.length && 'at' in x.item && Date.parse(x.item.at) >= cardAt;
       const variant = jobVariant.get(jobId);
-      const own = turnItems(t.web.liveUi.interruptedRow, jobId, events, runningIds.has(jobId), unfolded.has(jobId), detailsOpen.has(jobId), logOf, all.filter((x) => !below(x)))
+      const own = turnItems(t.web.liveUi.interruptedRow, jobId, events, runningIds.has(jobId), unfolded.has(jobId), detailsOpen.has(jobId), logOf, grouped ? all : all.filter((x) => !below(x)))
         .map((it): Item => (variant && (it.kind === 'agent' || it.kind === 'error' || it.kind === 'question' || it.kind === 'system') ? { ...it, variant } : it));
+      // Report 97: in a group the turn's cards are placed by their time in the whole chat (`interleave`), never inside the turn.
+      if (grouped) { placeTurn(placed, jobId, own, events[0]?.at, variant); return own; }
       return [
         ...own,
         ...cards,
@@ -466,7 +539,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     for (const e of entries) if (e.type === 'group-turn') for (const o of e.outcome) outcomes.set(`${e.jobId}\0${o.variant}`, o);
     const helperRows = new Map<string, Extract<Item, { kind: 'helper' }>>();
     const helperJob = (groupJobId: string, variant: VariantId) => (memberJobs ?? []).find((m) => m.job.parentJobId === groupJobId && (m.job.variant ?? m.variant) === variant);
-    const rowOf = (groupJobId: string, variant: VariantId): Extract<Item, { kind: 'helper' }> => {
+    const rowOf = (groupJobId: string, variant: VariantId, at?: string): Extract<Item, { kind: 'helper' }> => {
       const k = `${groupJobId}\0${variant}`;
       let row = helperRows.get(k);
       if (!row) {
@@ -474,6 +547,8 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         row = { key: `hp:${k}`, kind: 'helper', variant, groupJobId, open: helpersOpen.has(k), state: hj && active(hj.job) ? { kind: 'working', step: lastStep(hj.live) } : { kind: 'done' }, children: [], cards: [] };
         helperRows.set(k, row);
         out.push(row);
+        // Its place in time: where its first entry (or first live event) came.
+        if (grouped) placed.set(row, { stream: '', at: at === undefined ? NaN : Date.parse(at), sticky: at === undefined });
       }
       return row;
     };
@@ -482,7 +557,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     };
     entries.forEach((e, i) => {
       if (e.groupJobId && e.variant && e.type !== 'user') {
-        const row = rowOf(e.groupJobId, e.variant);
+        const row = rowOf(e.groupJobId, e.variant, e.at);
         const key = `e${i}`;
         if (e.type === 'agent') { if (firstIndex.get(e.jobId) === i) helperTurn(row, e.jobId); return; }
         if (e.type === 'version') {
@@ -541,7 +616,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       if (firstIndex.has(m.job.id)) continue;
       // A helper with only live events so far: its row (with its live steps), under its group turn.
       const v = m.job.variant ?? m.variant;
-      if (m.job.parentJobId && v) { const row = rowOf(m.job.parentJobId, v); if (jobs.has(m.job.id)) helperTurn(row, m.job.id); continue; }
+      if (m.job.parentJobId && v) { const row = rowOf(m.job.parentJobId, v, jobs.get(m.job.id)?.[0]?.at ?? m.job.startedAt ?? m.job.createdAt); if (jobs.has(m.job.id)) helperTurn(row, m.job.id); continue; }
       out.push(...turn(m.job.id));
     }
     // The group turn's outcome is the final word on each helper's row.
@@ -552,14 +627,24 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       row.state = o.status === 'stopped' ? { kind: 'stopped' } : o.status === 'failed' ? { kind: 'failed' } : o.status === 'unchanged' ? { kind: 'unchanged' }
         : o.version !== null ? { kind: 'version', n: o.version, complete: o.status === 'complete' } : row.state;
     }
-    out.push(...approvalsOf(null));
+    if (grouped) {
+      // Every card at its time, with the chip of the variant that asks (its turn's, its helper's, else its creative's).
+      const letterOf = (a: ApprovalRequest): VariantId | undefined => jobVariant.get(a.jobId)
+        ?? (memberJobs ?? []).find((m) => m.job.id === a.jobId)?.variant
+        ?? variants?.group.members.find((m) => m.slug === a.creativeSlug)?.letter;
+      const cardsInTime = shownApprovals.map((s) => {
+        const v = letterOf(s.approval);
+        return { item: { key: `ap:${s.approval.id}`, kind: 'approval' as const, shown: s, ...(v ? { variant: v } : {}) }, at: Date.parse(s.approval.createdAt) };
+      });
+      out.splice(0, out.length, ...interleave(out, placed, cardsInTime));
+    } else out.push(...approvalsOf(null));
     out.push(...outItems);
     for (const c of cards ?? []) out.push({ key: `card-${c.key}`, kind: 'card', node: c.node });
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
     if (intro) out.unshift({ key: 'intro', kind: 'intro', node: intro });
     return out;
-  }, [entries, job, live, working, unfolded, detailsOpen, helpersOpen, shownApprovals, ctx, outbox, queued, t, memberJobs, intro, cards]);
+  }, [entries, job, live, working, unfolded, detailsOpen, helpersOpen, shownApprovals, ctx, outbox, queued, t, memberJobs, intro, cards, variants]);
 
   // Items present at the first render appear with the panel; later ones enter from +8 px (T9).
   const mounted = useRef(false);
@@ -807,6 +892,7 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
       return (
         <div className="ms-step">
           <span className="ms-step-check" aria-hidden="true"><Icon name="check" size={13} strokeWidth={2} /></span>
+          <VariantChips list={item.variant ? [item.variant] : undefined} />
           <span className="ms-step-text">{item.text}</span>
           <When at={item.at} />
         </div>
@@ -815,6 +901,7 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
       return (
         <button type="button" className="ms-convo-fold" aria-expanded={item.open} onClick={() => onToggleFold(item.jobId)}>
           <span className="ms-step-check" aria-hidden="true"><Icon name="check" size={13} strokeWidth={2} /></span>
+          <VariantChips list={item.variant ? [item.variant] : undefined} />
           {c.steps({ count: item.count })}
           <Icon name="chevron" size={12} className="ms-chev" />
         </button>
@@ -855,7 +942,8 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
     }
     case 'approval':
       return (
-        <div className="ms-convo-approval">
+        <div className="ms-convo-approval" {...(item.variant ? { 'data-variant': item.variant } : {})}>
+          {item.variant ? <span className="ms-convo-approval-variant"><VariantChips list={[item.variant]} /></span> : null}
           <ApprovalCard approval={item.shown.approval} leaving={item.shown.leaving} onGone={onGone} />
         </div>
       );
