@@ -721,6 +721,11 @@ arrives and worked on later together.
     each with its variant chip (same-variant items merged, tool steps stay under their variant's last message); approval
     cards sit at their time, never inside a folded row; same order after reload. Open: live events use the page clock,
     approvals the core clock, so a live event can sit a few ms off until reload.
+- **ElevenLabs sound effects v3 (2026-11-02):** v2 ends on 2027-02-01. Decision 1991: the core asks v3 and repeats once with
+  v2 on "Unknown model" (the docs say v3 has limited access, the email says all accounts). Live: one 3 s v3 generation OK
+  with the site key. To do: remove `SFX_FALLBACK_MODEL` after the date, and ship a release well before it (installed
+  versions still ask v2). Open: the real "Unknown model" answer was never seen (a 401/403 would not be recognised); the
+  $0.12 per generation estimate (price page says both per minute and per generation; the test reported 33 credits for 3 s).
 - **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
   Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
   Verified (0.1.1, 2026-10-27): the first try got a 404 on PUT (npm fell back to setup-node's placeholder token); after
