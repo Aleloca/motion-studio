@@ -31,7 +31,7 @@ export const PAID_PRICES = {
    * ElevenLabs sound effects: $0.12 a generation, whatever its length. The seconds asked are the unit shown; with no duration
    * asked the provider picks one, shown as 5 s marked as an estimate.
    */
-  elevenlabsSfx: { model: 'eleven_text_to_sound_v2', usdPerGeneration: 0.12, defaultSeconds: 5 },
+  elevenlabsSfx: { model: 'eleven_text_to_sound_v3', usdPerGeneration: 0.12, defaultSeconds: 5 },
   /** Decision 1509: transcription per minute of audio. OpenAI `whisper-1`; ElevenLabs Scribe v2 at $0.22 an hour. */
   stt: {
     openai: { model: 'whisper-1', usdPerMin: 0.006 },
@@ -81,10 +81,10 @@ export function musicBill(seconds: number): PaidBill {
   return { provider: 'elevenlabs', service: 'music', model: p.model, units: { amount: seconds, unit: 'seconds' }, costUsd: round(seconds * p.usdPerSec) };
 }
 
-export function sfxBill(seconds: number | undefined): PaidBill {
+export function sfxBill(seconds: number | undefined, model: string = PAID_PRICES.elevenlabsSfx.model): PaidBill {
   const p = PAID_PRICES.elevenlabsSfx;
   const units = seconds === undefined ? { amount: p.defaultSeconds, unit: 'seconds' as const, estimated: true as const } : { amount: seconds, unit: 'seconds' as const };
-  return { provider: 'elevenlabs', service: 'sfx', model: p.model, units, costUsd: p.usdPerGeneration };
+  return { provider: 'elevenlabs', service: 'sfx', model, units, costUsd: p.usdPerGeneration };
 }
 
 /** Transcription, billed on whole minutes (an upper bound of the bill). */

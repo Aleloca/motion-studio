@@ -8,7 +8,9 @@ const MAX_BYTES = 50 * 1024 * 1024;
 export const AUDIO_PROMPT_MAX = 1000;
 export const SFX_SECONDS = { min: 0.5, max: 30 } as const;
 export const MUSIC_SECONDS = { min: 10, max: 300 } as const;
-export const SFX_MODEL = 'eleven_text_to_sound_v2';
+export const SFX_MODEL = 'eleven_text_to_sound_v3';
+/** Decision 1991: v2 works until 2027-02-01, for the accounts the service does not give v3 yet. Remove it after that date. */
+export const SFX_FALLBACK_MODEL = 'eleven_text_to_sound_v2';
 export const MUSIC_MODEL = 'music_v1';
 const PROVIDER = 'ElevenLabs';
 
@@ -44,17 +46,26 @@ export function validateMusic(req: MusicRequest): string {
   return prompt;
 }
 
-export async function elevenlabsSoundEffect(deps: Deps, req: SfxRequest): Promise<{ bytes: Uint8Array; format: 'mp3'; bill: PaidBill }> {
+/** The refusal of an account without v3, in the words of the service's docs: nothing was generated, so nothing was billed. */
+const isUnknownModel = (e: unknown): boolean => e instanceof ProviderError && e.upstreamStatus !== undefined && e.upstreamStatus >= 400 && e.upstreamStatus < 500 && /unknown model/i.test(e.message);
+
+export async function elevenlabsSoundEffect(deps: Deps, req: SfxRequest): Promise<{ bytes: Uint8Array; format: 'mp3'; bill: PaidBill; model: string }> {
   const text = validateSoundEffect(req);
   const body = {
     text,
     ...(req.durationSec !== undefined ? { duration_seconds: req.durationSec } : {}),
     ...(req.promptInfluence !== undefined ? { prompt_influence: req.promptInfluence } : {}),
     ...(req.loop !== undefined ? { loop: req.loop } : {}),
-    model_id: SFX_MODEL,
   };
-  const { bytes } = await post(deps, '/v1/sound-generation', body);
-  return { bytes, format: 'mp3', bill: sfxBill(req.durationSec) };
+  const generate = async (model: string) => {
+    const { bytes } = await post(deps, '/v1/sound-generation', { ...body, model_id: model });
+    return { bytes, format: 'mp3' as const, bill: sfxBill(req.durationSec, model), model };
+  };
+  try { return await generate(SFX_MODEL); }
+  catch (e) {
+    if (!isUnknownModel(e)) throw e;
+    return generate(SFX_FALLBACK_MODEL);
+  }
 }
 
 export async function elevenlabsMusic(deps: Deps, req: MusicRequest): Promise<{ bytes: Uint8Array; format: 'mp3'; bill: PaidBill }> {

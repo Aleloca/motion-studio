@@ -10,7 +10,7 @@ import { jobHttp } from '../bridge/provider-tools.ts';
 import { JobConflictError, type JobQueue } from '../jobs/job-queue.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
-import { elevenlabsMusic, elevenlabsSoundEffect, MUSIC_MODEL, SFX_MODEL, validateMusic, validateSoundEffect } from '../providers/elevenlabs-audio.ts';
+import { elevenlabsMusic, elevenlabsSoundEffect, MUSIC_MODEL, validateMusic, validateSoundEffect } from '../providers/elevenlabs-audio.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
 import { namedPermission, ProviderError, type HttpDeps } from '../providers/http.ts';
 import { KEY_PERMISSIONS, type KeyCheckCache } from '../providers/key-check.ts';
@@ -179,7 +179,7 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
         alive();
         const { name: _n, ...o } = b.options;
         const out = await paidCall('elevenlabs', 'sfx', () => elevenlabsSoundEffect(http, { ...o, prompt: checked.prompt }));
-        await store('audio', 'mp3', out.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: attribution('elevenlabs'), provider: 'elevenlabs', model: SFX_MODEL, ...(b.options.loop !== undefined ? { loop: b.options.loop } : {}) }));
+        await store('audio', 'mp3', out.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: attribution('elevenlabs'), provider: 'elevenlabs', model: out.model, ...(b.options.loop !== undefined ? { loop: b.options.loop } : {}) }));
       } else {
         await paid('provider:music-elevenlabs', t().approvals.generateMusic({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: b.options.durationSec, prompt: checked.prompt.slice(0, 300) }));
         alive();

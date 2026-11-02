@@ -17,7 +17,7 @@ const ICONS: Record<Kind, IconName> = { image: 'image', voice: 'volume', sfx: 'v
 /** Which provider keys each kind can use (the first one is the default). */
 const PROVIDERS: Record<Kind, Provider[]> = { image: ['openai'], voice: ['openai', 'elevenlabs'], sfx: ['elevenlabs'], music: ['elevenlabs'] };
 /** Models the core records for each result (shown to the user so the cost source is clear). */
-const MODELS: Record<string, string> = { 'image/openai': 'gpt-image-2', 'voice/openai': 'gpt-4o-mini-tts', 'voice/elevenlabs': 'eleven_multilingual_v2', 'sfx/elevenlabs': 'eleven_text_to_sound_v2', 'music/elevenlabs': 'music_v1' };
+const MODELS: Record<string, string> = { 'image/openai': 'gpt-image-2', 'voice/openai': 'gpt-4o-mini-tts', 'voice/elevenlabs': 'eleven_multilingual_v2', 'sfx/elevenlabs': 'eleven_text_to_sound_v3', 'music/elevenlabs': 'music_v1' };
 /** The providers' documented duration limits (the core enforces them too). */
 export const SFX_SECONDS = { min: 0.5, max: 30 };
 export const MUSIC_SECONDS = { min: 10, max: 300 };
