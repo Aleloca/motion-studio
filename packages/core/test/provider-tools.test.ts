@@ -439,7 +439,7 @@ describe('ElevenLabs sound effects, music and voices', () => {
     const out = await pending as { file: string };
     expect(out.file).toBe('assets/audio/slam.mp3');
     expect((await readFile(join(projectDir, out.file))).equals(Buffer.from([5, 5]))).toBe(true);
-    expect((await new LibraryStore(projectDir, media).listAssets())[0]).toMatchObject({ file: 'audio/slam.mp3', origin: 'generated', description: 'door slam', provider: 'elevenlabs', model: 'eleven_text_to_sound_v2', durationSec: 4.2, loop: true, attribution: 'AI-generated (ElevenLabs)' });
+    expect((await new LibraryStore(projectDir, media).listAssets())[0]).toMatchObject({ file: 'audio/slam.mp3', origin: 'generated', description: 'door slam', provider: 'elevenlabs', model: 'eleven_text_to_sound_v3', durationSec: 4.2, loop: true, attribution: 'AI-generated (ElevenLabs)' });
     expect(seen[0]).toMatchObject({ key: KEY });
     expect(JSON.parse(seen[0]!.body)).toMatchObject({ text: 'door slam', duration_seconds: 2, loop: true });
     expect(JSON.stringify([out, messages])).not.toContain(KEY);
@@ -933,7 +933,7 @@ describe('paid usage in the ledger (report 66)', () => {
       ['paid', 'j1', 'c1', { provider: 'openai', service: 'images', model: 'gpt-image-2', units: { amount: 1, unit: 'images' } }],
       ['paid', 'j1', 'c1', { provider: 'openai', service: 'voice', model: 'gpt-4o-mini-tts', units: { amount: 10, unit: 'characters' } }],
       ['paid', 'j1', 'c1', { provider: 'elevenlabs', service: 'voice', model: 'eleven_multilingual_v2', units: { amount: 4, unit: 'characters' } }],
-      ['paid', 'j1', 'c1', { provider: 'elevenlabs', service: 'sfx', model: 'eleven_text_to_sound_v2', units: { amount: 2, unit: 'seconds' } }],
+      ['paid', 'j1', 'c1', { provider: 'elevenlabs', service: 'sfx', model: 'eleven_text_to_sound_v3', units: { amount: 2, unit: 'seconds' } }],
       ['paid', 'j1', 'c1', { provider: 'elevenlabs', service: 'music', model: 'music_v1', units: { amount: 20, unit: 'seconds' } }],
     ]);
     expect(got.map((l) => l.costUsd)).toEqual([0.053, expect.closeTo(0.0001515, 6), 0.00032, 0.12, 0.05]);

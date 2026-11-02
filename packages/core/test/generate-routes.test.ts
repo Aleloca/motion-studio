@@ -91,7 +91,7 @@ describe('generate route', () => {
     expect((await settle((await post({ kind: 'sfx', provider: 'elevenlabs', prompt: 'Door slam', options: { durationSec: 2, loop: true } })).json().jobId)).state).toBe('succeeded');
     expect((await settle((await post({ kind: 'music', provider: 'elevenlabs', prompt: 'Calm piano', options: { durationSec: 30, instrumental: true } })).json().jobId)).state).toBe('succeeded');
     const list = await assets();
-    expect(list.find((x) => x.model === 'eleven_text_to_sound_v2')).toMatchObject({ provider: 'elevenlabs', loop: true, durationSec: 4.5, bytes: 4, attribution: 'Generato con AI (ElevenLabs)' });
+    expect(list.find((x) => x.model === 'eleven_text_to_sound_v3')).toMatchObject({ provider: 'elevenlabs', loop: true, durationSec: 4.5, bytes: 4, attribution: 'Generato con AI (ElevenLabs)' });
     expect(list.find((x) => x.model === 'music_v1')).toMatchObject({ provider: 'elevenlabs', description: 'Calm piano' });
     expect(JSON.parse(calls.find((c) => c.url.includes('/v1/music'))!.body)).toMatchObject({ music_length_ms: 30_000, force_instrumental: true });
     expect(keyChecks.capabilities('elevenlabs')).toMatchObject({ sfx: { status: 'ok' }, music: { status: 'ok' } });
@@ -249,7 +249,7 @@ describe('generate route · paid usage (report 66)', () => {
     expect((await lines()).map((l) => [l.kind, l.creativeSlug, l.paid])).toEqual([
       ['paid', null, { provider: 'openai', service: 'images', model: 'gpt-image-2', units: { amount: 1, unit: 'images' } }],
       ['paid', null, { provider: 'elevenlabs', service: 'voice', model: 'eleven_multilingual_v2', units: { amount: 12, unit: 'characters' } }],
-      ['paid', null, { provider: 'elevenlabs', service: 'sfx', model: 'eleven_text_to_sound_v2', units: { amount: 5, unit: 'seconds', estimated: true } }],
+      ['paid', null, { provider: 'elevenlabs', service: 'sfx', model: 'eleven_text_to_sound_v3', units: { amount: 5, unit: 'seconds', estimated: true } }],
       ['paid', null, { provider: 'elevenlabs', service: 'music', model: 'music_v1', units: { amount: 30, unit: 'seconds' } }],
     ]);
     const report = (await app.inject('/api/usage')).json();

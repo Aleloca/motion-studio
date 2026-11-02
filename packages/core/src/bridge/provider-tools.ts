@@ -11,7 +11,7 @@ import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
 import { installGoogleFont } from '../providers/google-fonts.ts';
-import { elevenlabsMusic, elevenlabsSoundEffect, elevenlabsVoices, MUSIC_MODEL, SFX_MODEL, validateMusic, validateSoundEffect } from '../providers/elevenlabs-audio.ts';
+import { elevenlabsMusic, elevenlabsSoundEffect, elevenlabsVoices, MUSIC_MODEL, validateMusic, validateSoundEffect } from '../providers/elevenlabs-audio.ts';
 import { namedPermission, ProviderError } from '../providers/http.ts';
 import { KEY_PERMISSIONS, KeyCheckCache } from '../providers/key-check.ts';
 import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '../providers/safe-fetch.ts';
@@ -253,7 +253,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       await recordPaid(c, out.bill);
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(prompt)}.mp3`, Buffer.from(out.bytes));
-      await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: SFX_MODEL, ...(req.loop !== undefined ? { loop: req.loop } : {}) }));
+      await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: out.model, ...(req.loop !== undefined ? { loop: req.loop } : {}) }));
       return { file: `assets/${file}`, provider: 'elevenlabs' };
     },
     music: async (c, a) => {

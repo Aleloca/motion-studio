@@ -21,12 +21,26 @@ describe('elevenlabsSoundEffect', () => {
     expect(calls[0]!.init.method).toBe('POST');
     expect((calls[0]!.init.headers as Record<string, string>)['xi-api-key']).toBe(KEY);
     expect(calls[0]!.init.redirect).toBe('error');
-    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ text: 'door slam', duration_seconds: 2.5, prompt_influence: 0.6, loop: true, model_id: 'eleven_text_to_sound_v2' });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ text: 'door slam', duration_seconds: 2.5, prompt_influence: 0.6, loop: true, model_id: 'eleven_text_to_sound_v3' });
   });
   it('omits the optional fields so the service infers the duration', async () => {
     const { calls, fetchImpl } = recorder([audio()]);
     await elevenlabsSoundEffect(deps(fetchImpl), { prompt: 'rain' });
-    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ text: 'rain', model_id: 'eleven_text_to_sound_v2' });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ text: 'rain', model_id: 'eleven_text_to_sound_v3' });
+  });
+  it('falls back to v2 once when the account does not have v3, and says which model made it', async () => {
+    const { calls, fetchImpl } = recorder([new Response(JSON.stringify({ detail: { message: 'Unknown model' } }), { status: 400 }), audio()]);
+    const r = await elevenlabsSoundEffect(deps(fetchImpl), { prompt: 'rain' });
+    expect(calls.map((c) => JSON.parse(String(c.init.body)).model_id)).toEqual(['eleven_text_to_sound_v3', 'eleven_text_to_sound_v2']);
+    expect(r.model).toBe('eleven_text_to_sound_v2');
+    expect(r.bill.model).toBe('eleven_text_to_sound_v2');
+  });
+  it('does not repeat the call on any other refusal', async () => {
+    for (const res of [new Response('bad text', { status: 422 }), new Response('', { status: 429 }), new Response('Unknown model', { status: 500 })]) {
+      const { calls, fetchImpl } = recorder([res, audio()]);
+      await expect(elevenlabsSoundEffect(deps(fetchImpl), { prompt: 'rain' })).rejects.toBeTruthy();
+      expect(calls).toHaveLength(1);
+    }
   });
   it('enforces the limits before sending anything', async () => {
     const { calls, fetchImpl } = recorder([]);
