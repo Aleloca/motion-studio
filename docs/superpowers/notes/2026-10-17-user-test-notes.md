@@ -733,6 +733,9 @@ arrives and worked on later together.
   published 0.1.1 with provenance.
 - **Product ticket to file:** audio `role: music` ducking is documented but not implemented in core audio-mix.ts and
   the runtime.
+- **Flaky in CI, cause not checked:** `core/test/variant-group.test.ts` "lock ordering" failed once on macOS (2026-11-02, CI
+  of b408320e): the discard of a running variant answered `variant-orphan`, not `variant-running`. Passes alone 3/3 and on
+  the CI rerun. It could be the test's timing or a real wrong error while several group changes overlap: look at it.
 - **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
   saved" failed once in a full local run (2026-10-23, waitFor on the action line) and passes alone 3/3.
 
